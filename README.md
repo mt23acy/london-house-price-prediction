@@ -1,12 +1,6 @@
 # 🏠 London House Price Prediction: Machine Learning vs. Deep Learning
 
-[
-[
-[
-[
-[
-[
-[
+
 
 ***
 
@@ -165,9 +159,6 @@ python main.py
 **Muhammad Faizan Tariq**  
 MSc Data Science and Analytics — University of Hertfordshire (2025)
 
-[
-[
-[
 
 ***
 
