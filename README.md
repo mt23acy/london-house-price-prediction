@@ -49,7 +49,7 @@ The project uses an integrated dataset formed by merging two public sources unde
 ### 📁 Input Dataset — `london_merged_df_filtered.csv`
 
 The model and visualisation tool require a pre-processed CSV file named
-`london_merged_df_filtered.csv` as input. This file is **not included in the repository**
+`london_merged_df_filtered.csv` as input. This file is **included in the repository**
 due to its large size, but can be reproduced by following these steps:
 
 1. Download the full **Price Paid Data (PPD)** complete file from
