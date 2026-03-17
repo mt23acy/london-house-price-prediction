@@ -102,6 +102,7 @@ london-house-price-prediction/
 ├── london_merged_df_filtered.zip      # Full merged London dataset (compressed, split)
 ├── london_merged_df_filtered.z01      # Split archive part 1 for full dataset
 └── london_merged_df_filtered.z02      # Split archive part 2 for full dataset
+```
 
 `main.py` loads `london_merged_df_filtered.csv`, performs preprocessing and label encoding, trains an XGBoost regressor (if needed), and exposes a Gradio interface for interactive address-based queries using the trained model.
 
