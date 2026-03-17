@@ -109,7 +109,7 @@ pip install numpy pandas scikit-learn xgboost tensorflow gradio matplotlib
 The interactive tool allows address lookups to view historical sales and predict property
 valuations using the optimised XGBoost model.
 
-**1. Prepare the data** — Ensure `london_merged_df_filtered.csv` is in the root directory
+**1. Download or prepare the data** — Ensure `london_merged_df_filtered.csv` is in the root directory
 (see the Dataset section above for how to generate this file).
 
 **2. Run the script:**
