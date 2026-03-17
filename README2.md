@@ -92,7 +92,6 @@ london-house-price-prediction/
 ├── FPR_Code.txt                       # Full pipeline script (reference implementation)
 ├── main.py                            # Gradio address-lookup app + XGBoost model serving
 ├── LICENSE                            # MIT License for the code
-├── assets/                            # Screenshots and visualisation images (optional)
 ├── notebooks/                         # Jupyter notebooks for data & model work
 │   ├── 1hot_london_2024p-merge-data-visualisation-final.ipynb
 │   │   # One-hot encoding experiments + early visualisation
