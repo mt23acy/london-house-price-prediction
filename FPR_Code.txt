@@ -1,0 +1,3731 @@
+Label Encoding
+
+
+# LR full
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore") 
+
+
+df = pd.read_csv("london_merged_df_filtered.csv")
+initial_rows = len(df)
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns.")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price'])
+df['price'] = df['price'].astype(float) 
+# Filter Outliers
+df = df[(df["price"] >= 10_000) & (df["price"] <= 2_0000_000)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside £10k-£20M range or non-numeric price.")
+print(f"DataFrame shape after initial cleaning: {df.shape}")
+
+
+# Feature Engineering (Date) ---
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) 
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+# Extract meaningful date features
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features (year, month, day, weekday, quarter).")
+print(f"Years present in data: {sorted(df['year'].unique())}")
+
+
+# eparate 2024 Data ---
+print("\n--- Separating 2024 Data ---")
+df_2024 = df[df['year'] == 2024].copy() 
+df = df[df['year'] != 2024] 
+
+print(f"Number of rows in training data (pre-2024): {len(df)}")
+print(f"Number of rows set aside for 2024 evaluation: {len(df_2024)}")
+
+df_original_lookup = df.copy() # Contains sampled, pre-2024 data with original columns
+
+
+# Prepare Data for Training
+# Drop the original date column for the training dataframe
+train_df = df.drop(columns=['date of transfer'])
+
+# Identify categorical columns
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+
+
+
+label_encoders = {} # Dictionary to store fitted encoders
+
+for col in categorical_cols:
+   
+    train_df[col].fillna('Missing', inplace=True)
+    
+    train_df[col] = train_df[col].astype(str)
+    
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+   
+    label_encoders[col] = le
+    print(f"Label encoded column: {col}")
+
+print(f"Shape after label encoding: {train_df.shape}") 
+
+# Fill NaNs in numerical columns (if any remain after initial cleaning)
+initial_nans = train_df.isna().sum().sum()
+if initial_nans > 0:
+    print(f"Filling {initial_nans} potential NaN values in numerical columns with 0.")
+    train_df.fillna(0, inplace=True) 
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+# Split into training and testing sets (using only pre-2024 data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+# Train the Linear Regression Model ---
+print("\n--- Training Linear Regression Model ---")
+lr_model = LinearRegression(n_jobs=-1)
+lr_model.fit(X_train, y_train)
+print("Model training complete.")
+
+
+#  Evaluate Model on the Test Set (Pre-2024 Data) ---
+print("\n--- Model Evaluation (Test Set - Pre-2024 Data) ---")
+predictions_test = lr_model.predict(X_test)
+
+mae_test = mean_absolute_error(y_test, predictions_test)
+mse_test = mean_squared_error(y_test, predictions_test)
+rmse_test = sqrt(mse_test)
+r2_test = r2_score(y_test, predictions_test)
+
+print(f'  MAE: {mae_test:.2f}')
+print(f'  MSE: {mse_test:.2f}')
+print(f'  RMSE: {rmse_test:.2f}')
+print(f"  R-squared (R²): {r2_test:.2f}")
+
+
+# Plot Actual vs. Predicted (Test Set - Pre-2024 Data) ---
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, predictions_test, alpha=0.3)
+plt.xlabel("Actual Price (Pre-2024 Test Set)")
+plt.ylabel("Predicted Price (Pre-2024 Test Set)")
+plt.title("Actual vs. Predicted Prices (Linear Regression - Pre-2024 Test Set)")
+min_price = min(y_test.min(), predictions_test.min()) if len(y_test)>0 else 0
+max_price = max(y_test.max(), predictions_test.max()) if len(y_test)>0 else 0
+if min_price != max_price and not np.isnan(min_price) and not np.isnan(max_price): # Added NaN check
+    plt.plot([min_price, max_price], [min_price, max_price], 'r--', lw=2, label='Ideal Fit')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
+# Prepare 2024 Data for Prediction ---
+print("\n--- Preparing 2024 Data for Prediction ---")
+if not df_2024.empty:
+    
+    df_2024_processed = df_2024.drop(columns=['date of transfer'])
+
+   
+    for col in categorical_cols:
+        if col in df_2024_processed.columns:
+           
+            df_2024_processed[col].fillna('Missing', inplace=True)
+            
+            df_2024_processed[col] = df_2024_processed[col].astype(str)
+           
+            le = label_encoders[col]
+            
+            known_classes = set(le.classes_)
+
+            df_2024_processed[col] = df_2024_processed[col].apply(
+                lambda x: le.transform([x])[0] if x in known_classes else -1
+            )
+            print(f"Applied label encoding to 2024 data column: {col}")
+        else:
+             print(f"Warning: Categorical column '{col}' not found in 2024 data during processing.")
+
+
+    # Separate features (X_2024) and actual prices (y_2024)
+    y_2024_actual = df_2024_processed['price']
+    X_2024 = df_2024_processed.drop('price', axis=1)
+
+
+    X_2024 = X_2024.reindex(columns=X_train.columns, fill_value=0) # Fill missing numerical cols with 0
+    print(f"Shape of 2024 features after alignment: {X_2024.shape}")
+
+    # Fill any remaining NaNs in numerical columns (e.g., from reindex or original Nans)
+    initial_nans_2024 = X_2024.isna().sum().sum()
+    if initial_nans_2024 > 0:
+       print(f"Filling {initial_nans_2024} NaN values in 2024 numerical features with 0.")
+       X_2024.fillna(0, inplace=True)
+
+
+    # Predict Prices for 2024 Data ---
+    print("\n--- Predicting Prices for 2024 Data ---")
+    predictions_2024 = lr_model.predict(X_2024)
+
+ 
+    df_2024['predicted_price'] = predictions_2024
+    print("Added 'predicted_price' column to the 2024 DataFrame.")
+
+    # -Evaluate Model on 2024 Data ---
+    print("\n--- Model Evaluation (2024 Data Only) ---")
+    mae_2024 = mean_absolute_error(y_2024_actual, predictions_2024)
+    mse_2024 = mean_squared_error(y_2024_actual, predictions_2024)
+    rmse_2024 = sqrt(mse_2024)
+    r2_2024 = r2_score(y_2024_actual, predictions_2024)
+
+    print(f'  MAE (2024): {mae_2024:.2f}')
+    print(f'  MSE (2024): {mse_2024:.2f}')
+    print(f'  RMSE (2024): {rmse_2024:.2f}')
+    print(f"  R-squared (R²) (2024): {r2_2024:.2f}")
+
+    # Compare Actual vs Predicted Prices for 2024 ---
+    print("\n--- Comparison of Actual vs Predicted Prices (Year 2024) ---")
+    # Display the first few rows with actual and predicted prices
+    print(df_2024[['price', 'predicted_price']].head())
+
+    
+    print("\nDescriptive Statistics for 2024 Prices:")
+    print(df_2024[['price', 'predicted_price']].describe())
+
+    # Plot Actual vs. Predicted (2024 Data) ---
+    plt.figure(figsize=(8, 6))
+    plt.scatter(df_2024['price'], df_2024['predicted_price'], alpha=0.4)
+    plt.xlabel("Actual Price (2024)")
+    plt.ylabel("Predicted Price (2024)")
+    plt.title("Actual vs. Predicted Prices (Linear Regression - 2024 Data Only)")
+    min_price_2024 = min(df_2024['price'].min(), df_2024['predicted_price'].min())
+    max_price_2024 = max(df_2024['price'].max(), df_2024['predicted_price'].max())
+    # Added NaN checks for plotting bounds
+    if min_price_2024 != max_price_2024 and not np.isnan(min_price_2024) and not np.isnan(max_price_2024):
+       plt.plot([min_price_2024, max_price_2024], [min_price_2024, max_price_2024], 'r--', lw=2, label='Ideal Fit')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+else:
+    print("\n--- No Data Found for Year 2024 ---")
+    print("Skipping prediction and evaluation for 2024.")
+
+
+print("\n--- Sample Price Prediction (Using Pre-2024 Sample) ---")
+
+if not df_original_lookup.empty:
+    sample_original_df = df_original_lookup.sample(1, random_state=42) # random_state=42 ensures reproducibility
+
+    if not sample_original_df.empty: # Check if sample is valid
+        sample_index = sample_original_df.index[0]
+
+        # Get original details from the lookup table
+        original_date = sample_original_df['date of transfer'].iloc[0]
+        original_year = sample_original_df['year'].iloc[0]
+        original_price = sample_original_df['price'].iloc[0]
+        address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+        original_address = ", ".join(str(sample_original_df[col].iloc[0]) for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+        print(f"\nSelected Sample (Index: {sample_index} from pre-2024 data):")
+        print(f"  Original Date: {original_date.strftime('%Y-%m-%d')}")
+        print(f"  Original Price: £{original_price:,.2f}")
+        print(f"  Address: {original_address}")
+
+        if sample_index in train_df.index:
+            sample_processed_row = train_df.loc[[sample_index]]
+
+            X_sample = sample_processed_row.drop('price', axis=1)
+   
+            X_sample = X_sample.reindex(columns=X_train.columns, fill_value=0)
+
+
+           
+            prediction_original_year = lr_model.predict(X_sample)[0]
+            print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+       
+            target_year_1 = 2026
+            X_sample_future_1 = X_sample.copy()
+            if 'year' in X_sample_future_1.columns:
+                 X_sample_future_1['year'] = target_year_1
+                 prediction_future_1 = lr_model.predict(X_sample_future_1)[0]
+                 print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_1}.")
+                 prediction_future_1 = np.nan 
+
+            target_year_2 = 2028
+            X_sample_future_2 = X_sample.copy()
+            if 'year' in X_sample_future_2.columns:
+                 X_sample_future_2['year'] = target_year_2
+                 prediction_future_2 = lr_model.predict(X_sample_future_2)[0]
+                 print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_2}.")
+                 prediction_future_2 = np.nan 
+
+            # Print Comparison
+            print("\nComparison:")
+            print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+            print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+            if not np.isnan(prediction_future_1): print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+            if not np.isnan(prediction_future_2): print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+        else:
+            print(f"Sample index {sample_index} not found in the processed training data (train_df). Skipping sample prediction.")
+    else:
+        print("Could not select a valid sample from the original lookup DataFrame. Skipping sample prediction.")
+
+else:
+    print("Original lookup DataFrame (pre-2024) is empty. Skipping sample prediction.")
+
+print("\n--- Script Finished ---")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# LR 2015
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore") 
+
+
+df = pd.read_csv("london_merged_df_filtered_2015.csv")
+initial_rows = len(df)
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns.")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price'])
+df['price'] = df['price'].astype(float) 
+# Filter Outliers
+df = df[(df["price"] >= 10_000) & (df["price"] <= 2_0000_000)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside £10k-£20M range or non-numeric price.")
+print(f"DataFrame shape after initial cleaning: {df.shape}")
+
+
+# Feature Engineering (Date) ---
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) 
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+# Extract meaningful date features
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features (year, month, day, weekday, quarter).")
+print(f"Years present in data: {sorted(df['year'].unique())}")
+
+
+# eparate 2024 Data ---
+print("\n--- Separating 2024 Data ---")
+df_2024 = df[df['year'] == 2024].copy() 
+df = df[df['year'] != 2024] 
+
+print(f"Number of rows in training data (pre-2024): {len(df)}")
+print(f"Number of rows set aside for 2024 evaluation: {len(df_2024)}")
+
+df_original_lookup = df.copy() # Contains sampled, pre-2024 data with original columns
+
+
+# Prepare Data for Training (Pre-2024) ---
+print("\n--- Preparing Training Data (Pre-2024) ---")
+# Drop the original date column for the training dataframe
+train_df = df.drop(columns=['date of transfer'])
+
+# Identify categorical columns
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+
+
+
+label_encoders = {} # Dictionary to store fitted encoders
+
+for col in categorical_cols:
+   
+    train_df[col].fillna('Missing', inplace=True)
+    
+    train_df[col] = train_df[col].astype(str)
+    
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+   
+    label_encoders[col] = le
+    print(f"Label encoded column: {col}")
+
+print(f"Shape after label encoding: {train_df.shape}") 
+
+# Fill NaNs in numerical columns (if any remain after initial cleaning)
+initial_nans = train_df.isna().sum().sum()
+if initial_nans > 0:
+    print(f"Filling {initial_nans} potential NaN values in numerical columns with 0.")
+    train_df.fillna(0, inplace=True) 
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+# Split into training and testing sets (using only pre-2024 data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+# Train the Linear Regression Model ---
+print("\n--- Training Linear Regression Model ---")
+lr_model = LinearRegression(n_jobs=-1)
+lr_model.fit(X_train, y_train)
+print("Model training complete.")
+
+
+#  Evaluate Model on the Test Set (Pre-2024 Data) ---
+print("\n--- Model Evaluation (Test Set - Pre-2024 Data) ---")
+predictions_test = lr_model.predict(X_test)
+
+mae_test = mean_absolute_error(y_test, predictions_test)
+mse_test = mean_squared_error(y_test, predictions_test)
+rmse_test = sqrt(mse_test)
+r2_test = r2_score(y_test, predictions_test)
+
+print(f'  MAE: {mae_test:.2f}')
+print(f'  MSE: {mse_test:.2f}')
+print(f'  RMSE: {rmse_test:.2f}')
+print(f"  R-squared (R²): {r2_test:.2f}")
+
+
+# Plot Actual vs. Predicted (Test Set - Pre-2024 Data) ---
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, predictions_test, alpha=0.3)
+plt.xlabel("Actual Price (Pre-2024 Test Set)")
+plt.ylabel("Predicted Price (Pre-2024 Test Set)")
+plt.title("Actual vs. Predicted Prices (Linear Regression - Pre-2024 Test Set)")
+min_price = min(y_test.min(), predictions_test.min()) if len(y_test)>0 else 0
+max_price = max(y_test.max(), predictions_test.max()) if len(y_test)>0 else 0
+if min_price != max_price and not np.isnan(min_price) and not np.isnan(max_price): # Added NaN check
+    plt.plot([min_price, max_price], [min_price, max_price], 'r--', lw=2, label='Ideal Fit')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
+# Prepare 2024 Data for Prediction ---
+print("\n--- Preparing 2024 Data for Prediction ---")
+if not df_2024.empty:
+    
+    df_2024_processed = df_2024.drop(columns=['date of transfer'])
+
+   
+    for col in categorical_cols:
+        if col in df_2024_processed.columns:
+           
+            df_2024_processed[col].fillna('Missing', inplace=True)
+            
+            df_2024_processed[col] = df_2024_processed[col].astype(str)
+           
+            le = label_encoders[col]
+            
+            known_classes = set(le.classes_)
+
+            df_2024_processed[col] = df_2024_processed[col].apply(
+                lambda x: le.transform([x])[0] if x in known_classes else -1
+            )
+            print(f"Applied label encoding to 2024 data column: {col}")
+        else:
+             print(f"Warning: Categorical column '{col}' not found in 2024 data during processing.")
+
+
+    # Separate features (X_2024) and actual prices (y_2024)
+    y_2024_actual = df_2024_processed['price']
+    X_2024 = df_2024_processed.drop('price', axis=1)
+
+
+    X_2024 = X_2024.reindex(columns=X_train.columns, fill_value=0) # Fill missing numerical cols with 0
+    print(f"Shape of 2024 features after alignment: {X_2024.shape}")
+
+    # Fill any remaining NaNs in numerical columns
+    initial_nans_2024 = X_2024.isna().sum().sum()
+    if initial_nans_2024 > 0:
+       print(f"Filling {initial_nans_2024} NaN values in 2024 numerical features with 0.")
+       X_2024.fillna(0, inplace=True)
+
+
+    # Predict Prices for 2024 Data ---
+    print("\n--- Predicting Prices for 2024 Data ---")
+    predictions_2024 = lr_model.predict(X_2024)
+
+ 
+    df_2024['predicted_price'] = predictions_2024
+    print("Added 'predicted_price' column to the 2024 DataFrame.")
+
+    # -Evaluate Model on 2024 Data ---
+    print("\n--- Model Evaluation (2024 Data Only) ---")
+    mae_2024 = mean_absolute_error(y_2024_actual, predictions_2024)
+    mse_2024 = mean_squared_error(y_2024_actual, predictions_2024)
+    rmse_2024 = sqrt(mse_2024)
+    r2_2024 = r2_score(y_2024_actual, predictions_2024)
+
+    print(f'  MAE (2024): {mae_2024:.2f}')
+    print(f'  MSE (2024): {mse_2024:.2f}')
+    print(f'  RMSE (2024): {rmse_2024:.2f}')
+    print(f"  R-squared (R²) (2024): {r2_2024:.2f}")
+
+    # Compare Actual vs Predicted Prices for 2024 ---
+    print("\n--- Comparison of Actual vs Predicted Prices (Year 2024) ---")
+    # Display the first few rows with actual and predicted prices
+    print(df_2024[['price', 'predicted_price']].head())
+
+    
+    print("\nDescriptive Statistics for 2024 Prices:")
+    print(df_2024[['price', 'predicted_price']].describe())
+
+    # Plot Actual vs. Predicted (2024 Data) ---
+    plt.figure(figsize=(8, 6))
+    plt.scatter(df_2024['price'], df_2024['predicted_price'], alpha=0.4)
+    plt.xlabel("Actual Price (2024)")
+    plt.ylabel("Predicted Price (2024)")
+    plt.title("Actual vs. Predicted Prices (Linear Regression - 2024 Data Only)")
+    min_price_2024 = min(df_2024['price'].min(), df_2024['predicted_price'].min())
+    max_price_2024 = max(df_2024['price'].max(), df_2024['predicted_price'].max())
+    # Added NaN checks for plotting bounds
+    if min_price_2024 != max_price_2024 and not np.isnan(min_price_2024) and not np.isnan(max_price_2024):
+       plt.plot([min_price_2024, max_price_2024], [min_price_2024, max_price_2024], 'r--', lw=2, label='Ideal Fit')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+else:
+    print("\n--- No Data Found for Year 2024 ---")
+    print("Skipping prediction and evaluation for 2024.")
+
+
+print("\n--- Sample Price Prediction (Using Pre-2024 Sample) ---")
+
+if not df_original_lookup.empty:
+    sample_original_df = df_original_lookup.sample(1, random_state=42) # random_state=42 ensures reproducibility
+
+    if not sample_original_df.empty: # Check if sample is valid
+        sample_index = sample_original_df.index[0]
+
+        # Get original details from the lookup table
+        original_date = sample_original_df['date of transfer'].iloc[0]
+        original_year = sample_original_df['year'].iloc[0]
+        original_price = sample_original_df['price'].iloc[0]
+        address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+        original_address = ", ".join(str(sample_original_df[col].iloc[0]) for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+        print(f"\nSelected Sample (Index: {sample_index} from pre-2024 data):")
+        print(f"  Original Date: {original_date.strftime('%Y-%m-%d')}")
+        print(f"  Original Price: £{original_price:,.2f}")
+        print(f"  Address: {original_address}")
+
+        if sample_index in train_df.index:
+            sample_processed_row = train_df.loc[[sample_index]]
+
+            X_sample = sample_processed_row.drop('price', axis=1)
+   
+            X_sample = X_sample.reindex(columns=X_train.columns, fill_value=0)
+
+
+           
+            prediction_original_year = lr_model.predict(X_sample)[0]
+            print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+       
+            target_year_1 = 2026
+            X_sample_future_1 = X_sample.copy()
+            if 'year' in X_sample_future_1.columns:
+                 X_sample_future_1['year'] = target_year_1
+                 prediction_future_1 = lr_model.predict(X_sample_future_1)[0]
+                 print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_1}.")
+                 prediction_future_1 = np.nan 
+
+            target_year_2 = 2028
+            X_sample_future_2 = X_sample.copy()
+            if 'year' in X_sample_future_2.columns:
+                 X_sample_future_2['year'] = target_year_2
+                 prediction_future_2 = lr_model.predict(X_sample_future_2)[0]
+                 print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_2}.")
+                 prediction_future_2 = np.nan 
+
+            # Print Comparison
+            print("\nComparison:")
+            print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+            print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+            if not np.isnan(prediction_future_1): print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+            if not np.isnan(prediction_future_2): print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+        else:
+            print(f"Sample index {sample_index} not found in the processed training data (train_df). Skipping sample prediction.")
+    else:
+        print("Could not select a valid sample from the original lookup DataFrame. Skipping sample prediction.")
+
+else:
+    print("Original lookup DataFrame (pre-2024) is empty. Skipping sample prediction.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+RF full
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# Import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor
+# Import LabelEncoder
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+import warnings # Import warnings
+warnings.filterwarnings("ignore") # <-- Ignores ALL warnings! Use with extreme caution.
+
+
+
+# --- Constants ---
+TARGET_YEAR_FOR_SEPARATION = 2024 # Define the year to separate
+MODEL_NAME = "Random Forest" # Define model name for titles/prints
+
+# --- 1. Load Data ---
+try:
+    df = pd.read_csv("london_merged_df_filtered.csv")
+    print(f"Successfully loaded data. Initial shape: {df.shape}")
+except FileNotFoundError:
+    # Adjusted error message slightly for clarity
+    print("Error: london_merged_df_filtered.csv not found. Please ensure the file is in the correct directory.")
+    exit() # Exit if file not found
+
+# Added errors='ignore' for robustness if columns are already dropped
+df = df.drop(columns=['postcode_cleaned', 'ppd_address_key', 'epc_address_key',
+       'lodgement_date','lmk_key','epc_built_form','epc_age_band'], errors='ignore')
+
+
+
+#  Basic Cleaning & Filtering ---
+print("\n--- Initial Cleaning ---")
+initial_rows = len(df)
+
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns (postcode, epc_floor_area, epc_habitable_rooms).")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price']) 
+df['price'] = df['price'].astype(float) # Ensure price is float for comparison
+
+df = df[(df["price"] >= 10_000) & (df["price"] <= 2_0000_000)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside £10k-£20M range or non-numeric price.")
+print(f"DataFrame shape after initial cleaning: {df.shape}")
+
+
+# Feature Engineering (Date) ---
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) # Drop rows where date couldn't be parsed
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+# Extract meaningful date features
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features (year, month, day, weekday, quarter).")
+print(f"Years present in data: {sorted(df['year'].unique())}")
+
+
+#  Separate Target Year Data ---
+print(f"\n--- Separating {TARGET_YEAR_FOR_SEPARATION} Data ---")
+# Check if the target year exists after sampling and cleaning
+if TARGET_YEAR_FOR_SEPARATION in df['year'].unique():
+    df_target_year = df[df['year'] == TARGET_YEAR_FOR_SEPARATION].copy() # Create a copy for target year data
+    df = df[df['year'] != TARGET_YEAR_FOR_SEPARATION] # Remove target year data from the main dataframe
+    print(f"Number of rows in training data (pre-{TARGET_YEAR_FOR_SEPARATION}): {len(df)}")
+    print(f"Number of rows set aside for {TARGET_YEAR_FOR_SEPARATION} evaluation: {len(df_target_year)}")
+else:
+    print(f"Warning: Year {TARGET_YEAR_FOR_SEPARATION} not found in the sampled and cleaned data. Cannot separate.")
+    df_target_year = pd.DataFrame() # Create an empty DataFrame
+
+
+df_original_lookup = df.copy() # Contains sampled, pre-target year data with original columns
+
+print(f"\n--- Preparing Training Data (Pre-{TARGET_YEAR_FOR_SEPARATION}) ---")
+# Drop the original date column for the training dataframe
+train_df = df.drop(columns=['date of transfer'])
+
+
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+print(f"Identified categorical columns: {categorical_cols}")
+
+
+label_encoders = {}
+
+for col in categorical_cols:
+
+    train_df[col].fillna('Missing', inplace=True)
+    # Ensure column is string type for LabelEncoder
+    train_df[col] = train_df[col].astype(str)
+    # Initialize and fit LabelEncoder
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+    # Store the fitted encoder
+    label_encoders[col] = le
+    print(f"Label encoded column: {col}")
+
+# Print shape after encoding (number of columns won't change with label encoding)
+print(f"Shape after label encoding: {train_df.shape}")
+
+
+
+initial_nans = train_df.isna().sum().sum()
+if initial_nans > 0:
+    print(f"Filling {initial_nans} potential NaN values in numerical columns with 0.")
+    # Consider a more sophisticated imputation strategy if appropriate (e.g., median)
+    train_df.fillna(0, inplace=True) #
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+# Check if training data is empty
+if X.empty or y.empty:
+    print("Error: Training data (X or y) is empty after preprocessing. Cannot proceed.")
+    exit()
+
+# Split into training and testing sets (using only pre-target year data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+# --- 7. Train the Random Forest Model ---
+print(f"\n--- Training {MODEL_NAME} Model ---")
+# Instantiate Random Forest Regressor
+# Parameters remain the same as the original RF script
+rf_model = RandomForestRegressor(n_estimators=100,
+                                 random_state=42,
+                                 n_jobs=-1,
+                                 oob_score=True,
+                                 max_features='sqrt')
+
+rf_model.fit(X_train, y_train)
+print("Model training complete.")
+
+
+# Evaluate Model on the Test Set (Pre-Target Year Data) ---
+print(f"\n--- Model Evaluation (Test Set - Pre-{TARGET_YEAR_FOR_SEPARATION} Data) ---")
+predictions_test = rf_model.predict(X_test)
+
+mae_test = mean_absolute_error(y_test, predictions_test)
+mse_test = mean_squared_error(y_test, predictions_test)
+rmse_test = sqrt(mse_test)
+r2_test = r2_score(y_test, predictions_test)
+
+
+
+print(f'  MAE: {mae_test:.2f}')
+print(f'  MSE: {mse_test:.2f}')
+print(f'  RMSE: {rmse_test:.2f}')
+print(f"  R-squared (R²): {r2_test:.2f}")
+
+
+# --- 9. Plot Actual vs. Predicted (Test Set - Pre-Target Year Data) ---
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, predictions_test, alpha=0.3)
+plt.xlabel(f"Actual Price (Pre-{TARGET_YEAR_FOR_SEPARATION} Test Set)")
+plt.ylabel(f"Predicted Price (Pre-{TARGET_YEAR_FOR_SEPARATION} Test Set)")
+plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - Pre-{TARGET_YEAR_FOR_SEPARATION} Test Set)")
+min_price = min(y_test.min(), predictions_test.min()) if len(y_test)>0 else 0
+max_price = max(y_test.max(), predictions_test.max()) if len(y_test)>0 else 0
+# Add NaN check for plot limits
+if min_price != max_price and not np.isnan(min_price) and not np.isnan(max_price):
+    plt.plot([min_price, max_price], [min_price, max_price], 'r--', lw=2, label='Ideal Fit')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
+# --- 10. Prepare Target Year Data for Prediction ---
+print(f"\n--- Preparing {TARGET_YEAR_FOR_SEPARATION} Data for Prediction ---")
+if not df_target_year.empty:
+    # Apply the same preprocessing steps as the training data
+    df_target_year_processed = df_target_year.drop(columns=['date of transfer'])
+
+    for col in categorical_cols:
+         if col in df_target_year_processed.columns:
+             # Handle NaNs before encoding, using the same placeholder
+             df_target_year_processed[col].fillna('Missing', inplace=True)
+             # Ensure column is string type
+             df_target_year_processed[col] = df_target_year_processed[col].astype(str)
+             # Retrieve the stored encoder
+             if col in label_encoders:
+                 le = label_encoders[col]
+                 # Get known classes from the fitted encoder
+                 known_classes = set(le.classes_)
+
+                 df_target_year_processed[col] = df_target_year_processed[col].apply(
+                     lambda x: le.transform([x])[0] if x in known_classes else -1 # Assign -1 to unknown categories
+                 )
+                 print(f"Applied label encoding to {TARGET_YEAR_FOR_SEPARATION} data column: {col}")
+             else:
+                  # This case should ideally not happen if categorical_cols are derived from train_df correctly
+                  print(f"Warning: Label encoder for column '{col}' not found. Filling with -1.")
+                  df_target_year_processed[col] = -1 # Fill with placeholder if encoder somehow missing
+         else:
+             # This handles cases where a categorical column identified in training data is missing in target year data
+             print(f"Warning: Categorical column '{col}' not found in {TARGET_YEAR_FOR_SEPARATION} data during processing. It will be handled by reindex.")
+
+
+    # Separate features (X_target_year) and actual prices (y_target_year)
+    y_target_year_actual = df_target_year_processed['price']
+    X_target_year = df_target_year_processed.drop('price', axis=1)
+
+
+    X_target_year = X_target_year.reindex(columns=X_train.columns, fill_value=0)
+    print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after alignment: {X_target_year.shape}")
+
+    # Fill any remaining NaNs (e.g., in numerical columns that weren't dropped or imputed earlier)
+    initial_nans_target_year = X_target_year.isna().sum().sum()
+    if initial_nans_target_year > 0:
+        print(f"Filling {initial_nans_target_year} NaN values in {TARGET_YEAR_FOR_SEPARATION} numerical features with 0.")
+        X_target_year.fillna(0, inplace=True)
+
+
+
+    print(f"\n--- Predicting Prices for {TARGET_YEAR_FOR_SEPARATION} Data ---")
+    predictions_target_year = rf_model.predict(X_target_year) # Use rf_model here
+
+
+    df_target_year['predicted_price'] = predictions_target_year
+    print(f"Added 'predicted_price' column to the {TARGET_YEAR_FOR_SEPARATION} DataFrame.")
+
+   -
+    print(f"\n--- Model Evaluation ({TARGET_YEAR_FOR_SEPARATION} Data Only) ---")
+    mae_target_year = mean_absolute_error(y_target_year_actual, predictions_target_year)
+    mse_target_year = mean_squared_error(y_target_year_actual, predictions_target_year)
+    rmse_target_year = sqrt(mse_target_year)
+    r2_target_year = r2_score(y_target_year_actual, predictions_target_year)
+
+    print(f'  MAE ({TARGET_YEAR_FOR_SEPARATION}): {mae_target_year:.2f}')
+    print(f'  MSE ({TARGET_YEAR_FOR_SEPARATION}): {mse_target_year:.2f}')
+    print(f'  RMSE ({TARGET_YEAR_FOR_SEPARATION}): {rmse_target_year:.2f}')
+    print(f"  R-squared (R²) ({TARGET_YEAR_FOR_SEPARATION}): {r2_target_year:.2f}")
+
+    # Compare Actual vs Predicted Prices for Target Year ---
+    print(f"\n--- Comparison of Actual vs Predicted Prices (Year {TARGET_YEAR_FOR_SEPARATION}) ---")
+    # Display the first few rows with actual and predicted prices
+    print(df_target_year[['price', 'predicted_price']].head())
+
+    # Optionally, display descriptive statistics for comparison
+    print(f"\nDescriptive Statistics for {TARGET_YEAR_FOR_SEPARATION} Prices:")
+    print(df_target_year[['price', 'predicted_price']].describe())
+
+    # Plot Actual vs. Predicted (Target Year Data) ---
+    plt.figure(figsize=(8, 6))
+    plt.scatter(df_target_year['price'], df_target_year['predicted_price'], alpha=0.4)
+    plt.xlabel(f"Actual Price ({TARGET_YEAR_FOR_SEPARATION})")
+    plt.ylabel(f"Predicted Price ({TARGET_YEAR_FOR_SEPARATION})")
+    plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - {TARGET_YEAR_FOR_SEPARATION} Data Only)") # Updated title
+    # Handle potential edge cases for plotting limits (empty df, single point, NaNs)
+    if len(df_target_year) > 1 and df_target_year['price'].nunique() > 1 and df_target_year['predicted_price'].nunique() > 1 :
+        min_price_target_year = df_target_year[['price', 'predicted_price']].min().min() # Simpler min/max finding
+        max_price_target_year = df_target_year[['price', 'predicted_price']].max().max()
+        # Add NaN checks for plot limits
+        if min_price_target_year != max_price_target_year and not np.isnan(min_price_target_year) and not np.isnan(max_price_target_year):
+           plt.plot([min_price_target_year, max_price_target_year], [min_price_target_year, max_price_target_year], 'r--', lw=2, label='Ideal Fit')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+else:
+    print(f"\n--- No Data Found for Year {TARGET_YEAR_FOR_SEPARATION} ---")
+    print(f"Skipping prediction and evaluation for {TARGET_YEAR_FOR_SEPARATION}.")
+
+
+#  Sample Prediction Section
+# This section uses data derived from train_df, which is already label-encoded.
+print(f"\n--- Sample Price Prediction ({MODEL_NAME} - Using Pre-{TARGET_YEAR_FOR_SEPARATION} Sample) ---") # Updated title
+
+if not df_original_lookup.empty:
+    # Select a random sample from the pre-target year lookup table
+    sample_original_df = df_original_lookup.sample(1, random_state=42) # random_state=42 ensures reproducibility
+
+    if not sample_original_df.empty: # Check if sample is valid
+        sample_index = sample_original_df.index[0]
+
+        # Get original details from the lookup table
+        original_date = sample_original_df['date of transfer'].iloc[0]
+        original_year = sample_original_df['year'].iloc[0]
+        original_price = sample_original_df['price'].iloc[0]
+        address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+        original_address = ", ".join(str(sample_original_df[col].iloc[0]) for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+        print(f"\nSelected Sample (Index: {sample_index} from pre-{TARGET_YEAR_FOR_SEPARATION} data):")
+        print(f"  Original Date: {original_date.strftime('%Y-%m-%d')}")
+        print(f"  Original Price: £{original_price:,.2f}")
+        print(f"  Address: {original_address}")
+
+       
+        if sample_index in train_df.index:
+            sample_processed_row = train_df.loc[[sample_index]] # Use double brackets to keep it a DataFrame
+
+            # Ensure the sample has the same columns as X_train (important if columns were dropped/added)
+            X_sample = sample_processed_row.drop('price', axis=1)
+            # Realign just in case something changed, using X_train columns as the reference
+            X_sample = X_sample.reindex(columns=X_train.columns, fill_value=0)
+
+
+            
+            prediction_original_year = rf_model.predict(X_sample)[0]
+            print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+            # Predict for future years (these remain hypothetical future predictions)
+            target_year_1 = 2026 # Example future year 1
+            X_sample_future_1 = X_sample.copy()
+            if 'year' in X_sample_future_1.columns:
+                 X_sample_future_1['year'] = target_year_1
+                 prediction_future_1 = rf_model.predict(X_sample_future_1)[0] # Use rf_model
+                 print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_1}.")
+                 prediction_future_1 = np.nan # Set prediction to NaN
+
+            target_year_2 = 2028 # Example future year 2
+            X_sample_future_2 = X_sample.copy()
+            if 'year' in X_sample_future_2.columns:
+                 X_sample_future_2['year'] = target_year_2
+                 prediction_future_2 = rf_model.predict(X_sample_future_2)[0] # Use rf_model
+                 print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_2}.")
+                 prediction_future_2 = np.nan # Set prediction to NaN
+
+
+            # Print Comparison
+            print("\nComparison:")
+            print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+            print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+            if not np.isnan(prediction_future_1): print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+            if not np.isnan(prediction_future_2): print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+        else:
+            print(f"Sample index {sample_index} not found in the processed training data (train_df). Skipping sample prediction.")
+    else:
+         print("Could not select a valid sample from the original lookup DataFrame. Skipping sample prediction.")
+else:
+    print(f"Original lookup DataFrame (pre-{TARGET_YEAR_FOR_SEPARATION}) is empty. Skipping sample prediction.")
+
+
+
+
+
+
+
+
+
+
+
+RF 2015
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# Import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor
+# Import LabelEncoder
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+import warnings # Import warnings
+warnings.filterwarnings("ignore") 
+
+
+
+
+TARGET_YEAR_FOR_SEPARATION = 2024 # Define the year to separate
+MODEL_NAME = "Random Forest" # Define model name for titles/prints
+
+# Load Data ---
+try:
+    df = pd.read_csv("london_merged_df_filtered_2015.csv")
+    print(f"Successfully loaded data. Initial shape: {df.shape}")
+except FileNotFoundError:
+    # Adjusted error message slightly for clarity
+    print("Error: london_merged_df_filtered.csv not found. Please ensure the file is in the correct directory.")
+    exit() # Exit if file not found
+
+# Added errors='ignore' for robustness if columns are already dropped
+df = df.drop(columns=['postcode_cleaned', 'ppd_address_key', 'epc_address_key',
+       'lodgement_date','lmk_key','epc_built_form','epc_age_band'], errors='ignore')
+
+
+
+#  Basic Cleaning & Filtering ---
+print("\n--- Initial Cleaning ---")
+initial_rows = len(df)
+
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns (postcode, epc_floor_area, epc_habitable_rooms).")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price']) 
+df['price'] = df['price'].astype(float) # Ensure price is float for comparison
+
+df = df[(df["price"] >= 10_000) & (df["price"] <= 2_0000_000)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside £10k-£20M range or non-numeric price.")
+print(f"DataFrame shape after initial cleaning: {df.shape}")
+
+
+# Feature Engineering (Date) ---
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) # Drop rows where date couldn't be parsed
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+# Extract meaningful date features
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features (year, month, day, weekday, quarter).")
+print(f"Years present in data: {sorted(df['year'].unique())}")
+
+
+#  Separate Target Year Data ---
+print(f"\n--- Separating {TARGET_YEAR_FOR_SEPARATION} Data ---")
+# Check if the target year exists after sampling and cleaning
+if TARGET_YEAR_FOR_SEPARATION in df['year'].unique():
+    df_target_year = df[df['year'] == TARGET_YEAR_FOR_SEPARATION].copy() # Create a copy for target year data
+    df = df[df['year'] != TARGET_YEAR_FOR_SEPARATION] # Remove target year data from the main dataframe
+    print(f"Number of rows in training data (pre-{TARGET_YEAR_FOR_SEPARATION}): {len(df)}")
+    print(f"Number of rows set aside for {TARGET_YEAR_FOR_SEPARATION} evaluation: {len(df_target_year)}")
+else:
+    print(f"Warning: Year {TARGET_YEAR_FOR_SEPARATION} not found in the sampled and cleaned data. Cannot separate.")
+    df_target_year = pd.DataFrame() # Create an empty DataFrame
+
+
+df_original_lookup = df.copy() # Contains sampled, pre-target year data with original columns
+
+print(f"\n--- Preparing Training Data (Pre-{TARGET_YEAR_FOR_SEPARATION}) ---")
+# Drop the original date column for the training dataframe
+train_df = df.drop(columns=['date of transfer'])
+
+
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+print(f"Identified categorical columns: {categorical_cols}")
+
+
+label_encoders = {}
+
+for col in categorical_cols:
+
+    train_df[col].fillna('Missing', inplace=True)
+    # Ensure column is string type for LabelEncoder
+    train_df[col] = train_df[col].astype(str)
+    # Initialize and fit LabelEncoder
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+    # Store the fitted encoder
+    label_encoders[col] = le
+    print(f"Label encoded column: {col}")
+
+
+print(f"Shape after label encoding: {train_df.shape}")
+
+
+
+initial_nans = train_df.isna().sum().sum()
+if initial_nans > 0:
+    print(f"Filling {initial_nans} potential NaN values in numerical columns with 0.")
+    # Consider a more sophisticated imputation strategy if appropriate (e.g., median)
+    train_df.fillna(0, inplace=True) #
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+# Check if training data is empty
+if X.empty or y.empty:
+    print("Error: Training data (X or y) is empty after preprocessing. Cannot proceed.")
+    exit()
+
+# Split into training and testing sets (using only pre-target year data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+# ---  Train the Random Forest Model ---
+print(f"\n--- Training {MODEL_NAME} Model ---")
+# Instantiate Random Forest Regressor
+# Parameters remain the same as the original RF script
+rf_model = RandomForestRegressor(n_estimators=100,
+                                 random_state=42,
+                                 n_jobs=-1,
+                                 oob_score=True,
+                                 max_features='sqrt')
+
+rf_model.fit(X_train, y_train)
+print("Model training complete.")
+
+
+# Evaluate Model on the Test Set (Pre-Target Year Data) ---
+print(f"\n--- Model Evaluation (Test Set - Pre-{TARGET_YEAR_FOR_SEPARATION} Data) ---")
+predictions_test = rf_model.predict(X_test)
+
+mae_test = mean_absolute_error(y_test, predictions_test)
+mse_test = mean_squared_error(y_test, predictions_test)
+rmse_test = sqrt(mse_test)
+r2_test = r2_score(y_test, predictions_test)
+
+
+
+print(f'  MAE: {mae_test:.2f}')
+print(f'  MSE: {mse_test:.2f}')
+print(f'  RMSE: {rmse_test:.2f}')
+print(f"  R-squared (R²): {r2_test:.2f}")
+
+
+# ---  Plot Actual vs. Predicted (Test Set - Pre-Target Year Data) ---
+plt.figure(figsize=(8, 6))
+plt.scatter(y_test, predictions_test, alpha=0.3)
+plt.xlabel(f"Actual Price (Pre-{TARGET_YEAR_FOR_SEPARATION} Test Set)")
+plt.ylabel(f"Predicted Price (Pre-{TARGET_YEAR_FOR_SEPARATION} Test Set)")
+plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - Pre-{TARGET_YEAR_FOR_SEPARATION} Test Set)")
+min_price = min(y_test.min(), predictions_test.min()) if len(y_test)>0 else 0
+max_price = max(y_test.max(), predictions_test.max()) if len(y_test)>0 else 0
+# Add NaN check for plot limits
+if min_price != max_price and not np.isnan(min_price) and not np.isnan(max_price):
+    plt.plot([min_price, max_price], [min_price, max_price], 'r--', lw=2, label='Ideal Fit')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
+# ---  Prepare Target Year Data for Prediction ---
+print(f"\n--- Preparing {TARGET_YEAR_FOR_SEPARATION} Data for Prediction ---")
+if not df_target_year.empty:
+    
+    df_target_year_processed = df_target_year.drop(columns=['date of transfer'])
+
+    for col in categorical_cols:
+         if col in df_target_year_processed.columns:
+             # Handle NaNs before encoding, using the same placeholder
+             df_target_year_processed[col].fillna('Missing', inplace=True)
+             # Ensure column is string type
+             df_target_year_processed[col] = df_target_year_processed[col].astype(str)
+             # Retrieve the stored encoder
+             if col in label_encoders:
+                 le = label_encoders[col]
+                 # Get known classes from the fitted encoder
+                 known_classes = set(le.classes_)
+
+                 df_target_year_processed[col] = df_target_year_processed[col].apply(
+                     lambda x: le.transform([x])[0] if x in known_classes else -1 # Assign -1 to unknown categories
+                 )
+                 print(f"Applied label encoding to {TARGET_YEAR_FOR_SEPARATION} data column: {col}")
+             else:
+                  # This case should ideally not happen if categorical_cols are derived from train_df correctly
+                  print(f"Warning: Label encoder for column '{col}' not found. Filling with -1.")
+                  df_target_year_processed[col] = -1 # Fill with placeholder if encoder somehow missing
+         else:
+             # This handles cases where a categorical column identified in training data is missing in target year data
+             print(f"Warning: Categorical column '{col}' not found in {TARGET_YEAR_FOR_SEPARATION} data during processing. It will be handled by reindex.")
+
+
+    # Separate features (X_target_year) and actual prices (y_target_year)
+    y_target_year_actual = df_target_year_processed['price']
+    X_target_year = df_target_year_processed.drop('price', axis=1)
+
+
+    X_target_year = X_target_year.reindex(columns=X_train.columns, fill_value=0)
+    print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after alignment: {X_target_year.shape}")
+
+    # Fill any remaining NaNs (e.g., in numerical columns that weren't dropped or imputed earlier)
+    initial_nans_target_year = X_target_year.isna().sum().sum()
+    if initial_nans_target_year > 0:
+        print(f"Filling {initial_nans_target_year} NaN values in {TARGET_YEAR_FOR_SEPARATION} numerical features with 0.")
+        X_target_year.fillna(0, inplace=True)
+
+
+
+    print(f"\n--- Predicting Prices for {TARGET_YEAR_FOR_SEPARATION} Data ---")
+    predictions_target_year = rf_model.predict(X_target_year) # Use rf_model here
+
+
+    df_target_year['predicted_price'] = predictions_target_year
+    print(f"Added 'predicted_price' column to the {TARGET_YEAR_FOR_SEPARATION} DataFrame.")
+
+   -
+    print(f"\n--- Model Evaluation ({TARGET_YEAR_FOR_SEPARATION} Data Only) ---")
+    mae_target_year = mean_absolute_error(y_target_year_actual, predictions_target_year)
+    mse_target_year = mean_squared_error(y_target_year_actual, predictions_target_year)
+    rmse_target_year = sqrt(mse_target_year)
+    r2_target_year = r2_score(y_target_year_actual, predictions_target_year)
+
+    print(f'  MAE ({TARGET_YEAR_FOR_SEPARATION}): {mae_target_year:.2f}')
+    print(f'  MSE ({TARGET_YEAR_FOR_SEPARATION}): {mse_target_year:.2f}')
+    print(f'  RMSE ({TARGET_YEAR_FOR_SEPARATION}): {rmse_target_year:.2f}')
+    print(f"  R-squared (R²) ({TARGET_YEAR_FOR_SEPARATION}): {r2_target_year:.2f}")
+
+    # Compare Actual vs Predicted Prices for Target Year ---
+    print(f"\n--- Comparison of Actual vs Predicted Prices (Year {TARGET_YEAR_FOR_SEPARATION}) ---")
+
+    print(df_target_year[['price', 'predicted_price']].head())
+
+
+
+    # Plot Actual vs. Predicted (Target Year Data) ---
+    plt.figure(figsize=(8, 6))
+    plt.scatter(df_target_year['price'], df_target_year['predicted_price'], alpha=0.4)
+    plt.xlabel(f"Actual Price ({TARGET_YEAR_FOR_SEPARATION})")
+    plt.ylabel(f"Predicted Price ({TARGET_YEAR_FOR_SEPARATION})")
+    plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - {TARGET_YEAR_FOR_SEPARATION} Data Only)") # Updated title
+    # Handle potential edge cases for plotting limits (empty df, single point, NaNs)
+    if len(df_target_year) > 1 and df_target_year['price'].nunique() > 1 and df_target_year['predicted_price'].nunique() > 1 :
+        min_price_target_year = df_target_year[['price', 'predicted_price']].min().min() # Simpler min/max finding
+        max_price_target_year = df_target_year[['price', 'predicted_price']].max().max()
+        # Add NaN checks for plot limits
+        if min_price_target_year != max_price_target_year and not np.isnan(min_price_target_year) and not np.isnan(max_price_target_year):
+           plt.plot([min_price_target_year, max_price_target_year], [min_price_target_year, max_price_target_year], 'r--', lw=2, label='Ideal Fit')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+else:
+    print(f"\n--- No Data Found for Year {TARGET_YEAR_FOR_SEPARATION} ---")
+    print(f"Skipping prediction and evaluation for {TARGET_YEAR_FOR_SEPARATION}.")
+
+
+#  Sample Prediction Section
+# This section uses data derived from train_df, which is already label-encoded.
+print(f"\n--- Sample Price Prediction ({MODEL_NAME} - Using Pre-{TARGET_YEAR_FOR_SEPARATION} Sample) ---") # Updated title
+
+if not df_original_lookup.empty:
+    # Select a random sample from the pre-target year lookup table
+    sample_original_df = df_original_lookup.sample(1, random_state=42) # random_state=42 ensures reproducibility
+
+    if not sample_original_df.empty: # Check if sample is valid
+        sample_index = sample_original_df.index[0]
+
+        # Get original details from the lookup table
+        original_date = sample_original_df['date of transfer'].iloc[0]
+        original_year = sample_original_df['year'].iloc[0]
+        original_price = sample_original_df['price'].iloc[0]
+        address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+        original_address = ", ".join(str(sample_original_df[col].iloc[0]) for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+        print(f"\nSelected Sample (Index: {sample_index} from pre-{TARGET_YEAR_FOR_SEPARATION} data):")
+        print(f"  Original Date: {original_date.strftime('%Y-%m-%d')}")
+        print(f"  Original Price: £{original_price:,.2f}")
+        print(f"  Address: {original_address}")
+
+       
+        if sample_index in train_df.index:
+            sample_processed_row = train_df.loc[[sample_index]] # Use double brackets to keep it a DataFrame
+
+            # Ensure the sample has the same columns as X_train (important if columns were dropped/added)
+            X_sample = sample_processed_row.drop('price', axis=1)
+            # Realign just in case something changed, using X_train columns as the reference
+            X_sample = X_sample.reindex(columns=X_train.columns, fill_value=0)
+
+
+            
+            prediction_original_year = rf_model.predict(X_sample)[0]
+            print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+            # Predict for future years (these remain hypothetical future predictions)
+            target_year_1 = 2026 # Example future year 1
+            X_sample_future_1 = X_sample.copy()
+            if 'year' in X_sample_future_1.columns:
+                 X_sample_future_1['year'] = target_year_1
+                 prediction_future_1 = rf_model.predict(X_sample_future_1)[0] # Use rf_model
+                 print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_1}.")
+                 prediction_future_1 = np.nan # Set prediction to NaN
+
+            target_year_2 = 2028 # Example future year 2
+            X_sample_future_2 = X_sample.copy()
+            if 'year' in X_sample_future_2.columns:
+                 X_sample_future_2['year'] = target_year_2
+                 prediction_future_2 = rf_model.predict(X_sample_future_2)[0] # Use rf_model
+                 print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+            else:
+                 print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_2}.")
+                 prediction_future_2 = np.nan # Set prediction to NaN
+
+
+            # Print Comparison
+            print("\nComparison:")
+            print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+            print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+            if not np.isnan(prediction_future_1): print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+            if not np.isnan(prediction_future_2): print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+        else:
+            print(f"Sample index {sample_index} not found in the processed training data (train_df). Skipping sample prediction.")
+    else:
+         print("Could not select a valid sample from the original lookup DataFrame. Skipping sample prediction.")
+else:
+    print(f"Original lookup DataFrame (pre-{TARGET_YEAR_FOR_SEPARATION}) is empty. Skipping sample prediction.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+# NN 2024
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# Import LabelEncoder
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler # Keep StandardScaler
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras import regularizers
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore") 
+
+
+TARGET_YEAR_FOR_SEPARATION = 2024 # Define the year to separate
+MODEL_NAME = "Keras MLP NN" # Define model name for titles/prints
+
+
+# warnings.filterwarnings("ignore", category=ConvergenceWarning) # Less relevant for Keras
+
+
+df = pd.read_csv("london_merged_df_filtered.csv")
+
+
+df = df.drop(columns=['postcode_cleaned', 'ppd_address_key', 'epc_address_key',
+       'lodgement_date','lmk_key','epc_built_form','epc_age_band'], errors='ignore')
+
+# Basic Cleaning & Filtering ---
+print("\n--- Initial Cleaning & Filtering ---")
+initial_rows = len(df)
+
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns (postcode, epc_floor_area, epc_habitable_rooms).")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+# Ensure 'price' is numeric before filtering
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price']) # Drop rows where price couldn't be converted
+df['price'] = df['price'].astype(float) # Ensure price is float for comparison
+# Filter Outliers
+df = df[(df["price"] >= 10_000) & (df["price"] <= 2_0000_000)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside £10k-£20M range or non-numeric price.")
+print(f"DataFrame shape after initial cleaning/filtering: {df.shape}")
+
+# Feature Engineering (Date) ---
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) # Drop rows where date couldn't be parsed
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+# Extract meaningful date features
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features.")
+print(f"Years present in data after cleaning: {sorted(df['year'].unique())}")
+
+#  Separate Target Year Data --- # Changed target year back to constant
+print(f"\n--- Separating {TARGET_YEAR_FOR_SEPARATION} Data ---")
+# Check if the target year exists after sampling and cleaning
+if TARGET_YEAR_FOR_SEPARATION in df['year'].unique():
+    # Use df_target_year as the variable name for the separated data
+    df_target_year = df[df['year'] == TARGET_YEAR_FOR_SEPARATION].copy()
+    df = df[df['year'] != TARGET_YEAR_FOR_SEPARATION] # Remove target year data from the main dataframe (for training)
+    print(f"Number of rows in training data (pre-{TARGET_YEAR_FOR_SEPARATION}): {len(df)}")
+    print(f"Number of rows set aside for {TARGET_YEAR_FOR_SEPARATION} evaluation: {len(df_target_year)}")
+else:
+    print(f"Warning: Year {TARGET_YEAR_FOR_SEPARATION} not found in the sampled and cleaned data. Cannot separate.")
+    df_target_year = pd.DataFrame() # Create an empty DataFrame
+
+# Keep a copy for sample lookup (now only contains pre-target year data)
+df_original_lookup = df.copy()
+
+#  Prepare Data for Training (Pre-Target Year) ---
+print(f"\n--- Preparing Training Data (Pre-{TARGET_YEAR_FOR_SEPARATION}) ---")
+# Drop the original date column for the training dataframe
+train_df = df.drop(columns=['date of transfer'])
+
+# Identify categorical columns
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+print(f"Identified categorical columns: {categorical_cols}")
+
+
+label_encoders = {} # Dictionary to store fitted encoders
+
+for col in categorical_cols:
+    # Handle NaNs before encoding: fill with a placeholder string
+    train_df[col].fillna('Missing', inplace=True)
+    # Ensure column is string type for LabelEncoder
+    train_df[col] = train_df[col].astype(str)
+    # Initialize and fit LabelEncoder
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+    # Store the fitted encoder
+    label_encoders[col] = le
+    print(f"Label encoded column: {col}")
+
+# Print shape after encoding (number of columns won't change with label encoding)
+print(f"Shape after label encoding: {train_df.shape}")
+
+# Fill NaNs in numerical columns (if any remain)
+initial_nans = train_df.isna().sum().sum()
+if initial_nans > 0:
+    print(f"Filling {initial_nans} potential NaN values in numerical columns with 0.")
+    train_df.fillna(0, inplace=True)
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+# Get the number of features *after* preprocessing for the Input layer
+n_features = X.shape[1]
+print(f"Number of features after preprocessing: {n_features}")
+
+
+if X.empty or y.empty:
+    print("Error: Training data (X or y) is empty after preprocessing. Cannot proceed.")
+    exit()
+
+# Split into training and testing sets (using only pre-target year data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+print("\n--- Scaling Features and Target ---")
+x_scaler = StandardScaler()
+# Fit scaler ONLY on training data features
+X_train_scaled = x_scaler.fit_transform(X_train)
+X_test_scaled = x_scaler.transform(X_test)
+print("Features scaled using StandardScaler.")
+
+
+y_scaler = StandardScaler()
+y_train_scaled = y_scaler.fit_transform(y_train.values.reshape(-1, 1))
+# Transform y_test using the *same* scaler fitted on y_train
+# y_test_scaled = y_scaler.transform(y_test.values.reshape(-1, 1)) # Only needed if evaluating loss on scaled test data directly
+print("Target variable (price) scaled using StandardScaler.")
+
+# Define and Train the Keras Model ---
+print(f"\n--- Defining and Training {MODEL_NAME} Model ---")
+# Using the build function from the user's provided code (no changes needed here)
+def build_and_compile_model(n_features):
+  model = keras.Sequential([
+      layers.Input(shape=(n_features,)),
+      layers.Dense(128, activation='relu', kernel_regularizer=regularizers.l2(0.001)),
+      layers.Dropout(0.3),
+      layers.Dense(64, activation='relu', kernel_regularizer=regularizers.l2(0.001)),
+      layers.Dropout(0.3),
+      layers.Dense(1) # Output layer for regression
+  ])
+
+  model.compile(loss='mean_squared_error',
+                optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
+                metrics=['mae', 'mse']) # MAE and MSE on the SCALED target
+  return model
+
+nn_model = build_and_compile_model(n_features)
+nn_model.summary()
+
+# Define callbacks (no changes needed)
+early_stopping = EarlyStopping(
+    monitor='val_loss', # Monitor validation loss (on scaled target)
+    patience=20,        # Stop after 20 epochs with no improvement
+    restore_best_weights=True, # Restore weights from the best epoch
+    verbose=1
+)
+
+
+print("\nStarting model training...")
+
+if X_train_scaled.shape[0] == 0 or y_train_scaled.shape[0] == 0:
+    print("Error: Training data is empty after scaling/splitting. Cannot train model.")
+    exit()
+
+history = nn_model.fit(
+    X_train_scaled,
+    y_train_scaled, # Use scaled target for training
+    epochs=200,           # Number of training epochs
+    batch_size=64,        # Batch size
+    validation_split=0.2, # Use 20% of training data for validation
+    verbose=1,            # Show progress per epoch
+    callbacks=[early_stopping] # Apply early stopping
+)
+print("Model training complete.")
+
+
+
+
+print(f"\n--- Evaluating Model on Test Set (Pre-{TARGET_YEAR_FOR_SEPARATION} Data) ---")
+# Predict SCALED prices on SCALED test data
+scaled_predictions_test = nn_model.predict(X_test_scaled)
+
+
+predictions_test_original_scale = y_scaler.inverse_transform(scaled_predictions_test).flatten()
+
+
+valid_indices_test = np.isfinite(predictions_test_original_scale) & np.isfinite(y_test.values)
+if not np.all(valid_indices_test):
+    print(f"Warning: Found {np.sum(~valid_indices_test)} non-finite values in test set final predictions or actuals. Removing them for evaluation.")
+    predictions_eval_test = predictions_test_original_scale[valid_indices_test]
+    y_test_eval = y_test.values[valid_indices_test]
+else:
+    predictions_eval_test = predictions_test_original_scale
+    y_test_eval = y_test.values # Use original y_test values
+
+
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    mae_test = mean_absolute_error(y_test_eval, predictions_eval_test)
+    mse_test = mean_squared_error(y_test_eval, predictions_eval_test)
+    rmse_test = sqrt(max(0, mse_test)) # Prevent sqrt of potential tiny negative due to precision
+    r2_test = r2_score(y_test_eval, predictions_eval_test)
+
+    print("\nMetrics on Original Price Scale (Test Set):")
+    print(f'  MAE: {mae_test:,.2f}')
+    print(f'  MSE: {mse_test:,.2f}')
+    print(f'  RMSE: {rmse_test:,.2f}')
+    print(f"  R-squared (R²): {r2_test:.4f}")
+else:
+     print("Could not evaluate model on test set as no valid predictions or actual values were available after cleaning.")
+
+# Plot Actual vs. Predicted (Test Set - Pre-Target Year Data) ---
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    plt.figure(figsize=(10, 8))
+    plt.scatter(y_test_eval, predictions_eval_test, alpha=0.3)
+    plt.xlabel("Actual Price (£)")
+    plt.ylabel("Predicted Price (£)")
+    plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - Test Set - Original Scale)")
+    min_price_val = min(y_test_eval.min(), predictions_eval_test.min()) * 0.9
+    max_price_val = max(y_test_eval.max(), predictions_eval_test.max()) * 1.1
+    if min_price_val >= max_price_val: max_price_val = min_price_val + 10000 # Prevent equal limits
+    plt.plot([min_price_val, max_price_val], [min_price_val, max_price_val], 'r--', lw=2, label='Ideal Fit')
+    plt.xlim(min_price_val, max_price_val)
+    plt.ylim(min_price_val, max_price_val)
+    plt.legend()
+    plt.grid(True)
+    from matplotlib.ticker import FuncFormatter
+    formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+    plt.gca().xaxis.set_major_formatter(formatter)
+    plt.gca().yaxis.set_major_formatter(formatter)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+else:
+    print("Skipping test set plot due to lack of valid data points.")
+
+# Prepare and Predict on Target Year Data 
+print(f"\n--- Preparing and Predicting on {TARGET_YEAR_FOR_SEPARATION} Data ---")
+# Use df_target_year which was created in step 5
+if not df_target_year.empty:
+    try:
+        # Store original prices for evaluation
+        y_target_year_actual_original = df_target_year['price'].copy()
+
+        # Prepare features for target year data
+        # Drop price and date here
+        df_target_year_processed = df_target_year.drop(columns=['date of transfer', 'price'])
+
+
+        for col in categorical_cols:
+             if col in df_target_year_processed.columns:
+                 # Handle NaNs before encoding, using the same placeholder
+                 df_target_year_processed[col].fillna('Missing', inplace=True)
+                 # Ensure column is string type
+                 df_target_year_processed[col] = df_target_year_processed[col].astype(str)
+                 # Retrieve the stored encoder
+                 if col in label_encoders:
+                     le = label_encoders[col]
+                     # Get known classes from the fitted encoder
+                     known_classes = set(le.classes_)
+                     # Handle potential new/unknown categories: map them to a specific value (e.g., -1)
+                     df_target_year_processed[col] = df_target_year_processed[col].apply(
+                         lambda x: le.transform([x])[0] if x in known_classes else -1 # Assign -1 to unknown
+                     )
+                     print(f"Applied label encoding to {TARGET_YEAR_FOR_SEPARATION} data column: {col}")
+                 else:
+                      print(f"Warning: Label encoder for column '{col}' not found. Filling with -1.")
+                      df_target_year_processed[col] = -1 # Fill with placeholder if encoder missing
+             else:
+                 # This handles cases where a categorical column identified in training data is missing in target year data
+                 print(f"Warning: Categorical column '{col}' not found in {TARGET_YEAR_FOR_SEPARATION} data during processing. It will be handled by reindex.")
+
+
+        X_target_year = df_target_year_processed
+
+
+        X_target_year = X_target_year.reindex(columns=X.columns, fill_value=0)
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after align: {X_target_year.shape}")
+
+
+        initial_nans_target_year = X_target_year.isna().sum().sum()
+        if initial_nans_target_year > 0:
+            print(f"Filling {initial_nans_target_year} NaN values in {TARGET_YEAR_FOR_SEPARATION} features with 0.")
+            X_target_year.fillna(0, inplace=True)
+
+
+        X_target_year_scaled = x_scaler.transform(X_target_year)
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after scaling: {X_target_year_scaled.shape}")
+
+
+        scaled_predictions_target_year = nn_model.predict(X_target_year_scaled)
+
+
+        predictions_target_year_original_scale = y_scaler.inverse_transform(scaled_predictions_target_year).flatten()
+
+  
+        df_target_year['predicted_price'] = predictions_target_year_original_scale
+        print(f"Added 'predicted_price' column (original scale) to the {TARGET_YEAR_FOR_SEPARATION} DataFrame.")
+
+
+        print(f"\n--- Model Evaluation ({TARGET_YEAR_FOR_SEPARATION} Data Only - Original Scale) ---")
+        # Ensure finite values for evaluation
+        target_valid_indices = np.isfinite(predictions_target_year_original_scale) & np.isfinite(y_target_year_actual_original.values)
+        if not np.all(target_valid_indices):
+            print(f"Warning: Found {np.sum(~target_valid_indices)} non-finite values in {TARGET_YEAR_FOR_SEPARATION} final predictions or actuals. Removing them for evaluation.")
+            target_predictions_eval = predictions_target_year_original_scale[target_valid_indices]
+            target_y_eval = y_target_year_actual_original.values[target_valid_indices]
+        else:
+            target_predictions_eval = predictions_target_year_original_scale
+            target_y_eval = y_target_year_actual_original.values
+
+        if len(target_predictions_eval) > 0 and len(target_y_eval) > 0:
+            mae_target_year = mean_absolute_error(target_y_eval, target_predictions_eval)
+            mse_target_year = mean_squared_error(target_y_eval, target_predictions_eval)
+            rmse_target_year = sqrt(max(0, mse_target_year))
+            r2_target_year = r2_score(target_y_eval, target_predictions_eval)
+
+            print(f'  MAE ({TARGET_YEAR_FOR_SEPARATION}): {mae_target_year:,.2f}')
+            print(f'  MSE ({TARGET_YEAR_FOR_SEPARATION}): {mse_target_year:,.2f}')
+            print(f'  RMSE ({TARGET_YEAR_FOR_SEPARATION}): {rmse_target_year:,.2f}')
+            print(f"  R-squared (R²) ({TARGET_YEAR_FOR_SEPARATION}): {r2_target_year:.4f}")
+
+   
+            print(f"\n--- Comparison of Actual vs Predicted Prices (Year {TARGET_YEAR_FOR_SEPARATION}) ---")
+            print(df_target_year[['price', 'predicted_price']].head())
+            print(f"\nDescriptive Statistics for {TARGET_YEAR_FOR_SEPARATION} Prices:")
+            # Format describe output
+            print(df_target_year[['price', 'predicted_price']].describe().applymap(lambda x: f"{x:,.0f}"))
+
+            # Plot Target Year Actual vs Predicted (Original Scale)
+            plt.figure(figsize=(10, 8))
+            plt.scatter(target_y_eval, target_predictions_eval, alpha=0.4)
+            plt.xlabel(f"Actual Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.ylabel(f"Predicted Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - {TARGET_YEAR_FOR_SEPARATION} Data Only - Original Scale)")
+            min_price_tgt = min(target_y_eval.min(), target_predictions_eval.min()) * 0.9
+            max_price_tgt = max(target_y_eval.max(), target_predictions_eval.max()) * 1.1
+            if min_price_tgt >= max_price_tgt: max_price_tgt = min_price_tgt + 10000 # Prevent equal limits
+            plt.plot([min_price_tgt, max_price_tgt], [min_price_tgt, max_price_tgt], 'r--', lw=2, label='Ideal Fit')
+            plt.xlim(min_price_tgt, max_price_tgt)
+            plt.ylim(min_price_tgt, max_price_tgt)
+            plt.legend()
+            plt.grid(True)
+            formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+            plt.gca().xaxis.set_major_formatter(formatter)
+            plt.gca().yaxis.set_major_formatter(formatter)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+        else:
+             print(f"Could not evaluate {TARGET_YEAR_FOR_SEPARATION} model as no valid predictions or actual values were available after cleaning.")
+    except Exception as e:
+        print(f"An error occurred during {TARGET_YEAR_FOR_SEPARATION} prediction/evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+else:
+    print(f"\n--- No Data Found for Year {TARGET_YEAR_FOR_SEPARATION} ---")
+    print(f"Skipping prediction and evaluation for {TARGET_YEAR_FOR_SEPARATION}.")
+
+# Sample Prediction Section 
+print(f"\n--- Sample Price Prediction ({MODEL_NAME} - Using Pre-{TARGET_YEAR_FOR_SEPARATION} Sample) ---")
+if not df_original_lookup.empty:
+    try:
+        # Select a random sample from the pre-target year lookup table
+        sample_original_df = df_original_lookup.sample(1, random_state=42)
+
+        if not sample_original_df.empty: # Check if sample is valid
+            sample_index = sample_original_df.index[0]
+
+            # Get original details
+            original_date = sample_original_df['date of transfer'].iloc[0]
+            original_year = sample_original_df['year'].iloc[0]
+            original_price = sample_original_df['price'].iloc[0] # Actual price
+            address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+            original_address = ", ".join(str(sample_original_df[col].iloc[0]) for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+            print(f"\nSelected Sample (Index: {sample_index}):")
+            print(f"  Original Date of Transfer: {original_date.strftime('%Y-%m-%d')}")
+            print(f"  Original Actual Price: £{original_price:,.2f}")
+            print(f"  Address: {original_address}")
+
+            # Get the corresponding processed row from train_df (which is label encoded)
+            if sample_index in train_df.index:
+                sample_processed_row = train_df.loc[[sample_index]]
+
+                X_sample_unscaled = sample_processed_row.drop('price', axis=1)
+
+                X_sample_unscaled = X_sample_unscaled.reindex(columns=X.columns, fill_value=0)
+
+   
+                X_sample_scaled = x_scaler.transform(X_sample_unscaled)
+
+  
+                scaled_prediction_original_year = nn_model.predict(X_sample_scaled) # Output is 2D
+
+                prediction_original_year = y_scaler.inverse_transform(scaled_prediction_original_year)[0, 0]
+                print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+
+                target_year_1 = 2026
+                X_sample_future_1_unscaled = X_sample_unscaled.copy()
+                if 'year' in X_sample_future_1_unscaled.columns:
+                    X_sample_future_1_unscaled['year'] = target_year_1
+                    X_sample_future_1_scaled = x_scaler.transform(X_sample_future_1_unscaled)
+                    scaled_prediction_future_1 = nn_model.predict(X_sample_future_1_scaled)
+                    prediction_future_1 = y_scaler.inverse_transform(scaled_prediction_future_1)[0, 0]
+                    print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+                else:
+                    print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_1}.")
+                    prediction_future_1 = np.nan
+
+  
+                target_year_2 = 2028
+                X_sample_future_2_unscaled = X_sample_unscaled.copy()
+                if 'year' in X_sample_future_2_unscaled.columns:
+                    X_sample_future_2_unscaled['year'] = target_year_2
+                    X_sample_future_2_scaled = x_scaler.transform(X_sample_future_2_unscaled)
+                    scaled_prediction_future_2 = nn_model.predict(X_sample_future_2_scaled)
+                    prediction_future_2 = y_scaler.inverse_transform(scaled_prediction_future_2)[0, 0]
+                    print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+                else:
+                    print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_2}.")
+                    prediction_future_2 = np.nan
+
+                print("\nComparison:")
+                print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+                print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+                if not np.isnan(prediction_future_1): print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+                if not np.isnan(prediction_future_2): print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+
+            else:
+                print(f"Sample index {sample_index} not found in the processed training data (train_df). Skipping sample prediction.")
+        else:
+             print("Could not select a valid sample from the original lookup DataFrame. Skipping sample prediction.")
+    except Exception as e:
+        print(f"An error occurred during sample prediction: {e}")
+        import traceback
+        traceback.print_exc()
+
+else:
+    print(f"Original lookup DataFrame (pre-{TARGET_YEAR_FOR_SEPARATION}) is empty. Skipping sample prediction.")
+
+print("\n--- Script Finished ---")
+
+
+
+
+
+
+
+# NN 2024 10y
+
+
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# Import LabelEncoder
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler # Keep StandardScaler
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras import regularizers
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore") 
+
+
+TARGET_YEAR_FOR_SEPARATION = 2024 # Define the year to separate
+MODEL_NAME = "Keras MLP NN" # Define model name for titles/prints
+
+
+
+df = pd.read_csv("london_merged_df_filtered_2015.csv")
+
+
+df = df.drop(columns=['postcode_cleaned', 'ppd_address_key', 'epc_address_key',
+       'lodgement_date','lmk_key','epc_built_form','epc_age_band'], errors='ignore')
+
+# Basic Cleaning & Filtering ---
+print("\n--- Initial Cleaning & Filtering ---")
+initial_rows = len(df)
+
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns (postcode, epc_floor_area, epc_habitable_rooms).")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+# Ensure 'price' is numeric before filtering
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price']) # Drop rows where price couldn't be converted
+df['price'] = df['price'].astype(float) # Ensure price is float for comparison
+# Filter Outliers
+df = df[(df["price"] >= 10_000) & (df["price"] <= 2_0000_000)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside £10k-£20M range or non-numeric price.")
+print(f"DataFrame shape after initial cleaning/filtering: {df.shape}")
+
+# Feature Engineering (Date) ---
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) # Drop rows where date couldn't be parsed
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+# Extract meaningful date features
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features.")
+print(f"Years present in data after cleaning: {sorted(df['year'].unique())}")
+
+#  Separate Target Year Data --- # Changed target year back to constant
+print(f"\n--- Separating {TARGET_YEAR_FOR_SEPARATION} Data ---")
+# Check if the target year exists after sampling and cleaning
+if TARGET_YEAR_FOR_SEPARATION in df['year'].unique():
+    # Use df_target_year as the variable name for the separated data
+    df_target_year = df[df['year'] == TARGET_YEAR_FOR_SEPARATION].copy()
+    df = df[df['year'] != TARGET_YEAR_FOR_SEPARATION] # Remove target year data from the main dataframe (for training)
+    print(f"Number of rows in training data (pre-{TARGET_YEAR_FOR_SEPARATION}): {len(df)}")
+    print(f"Number of rows set aside for {TARGET_YEAR_FOR_SEPARATION} evaluation: {len(df_target_year)}")
+else:
+    print(f"Warning: Year {TARGET_YEAR_FOR_SEPARATION} not found in the sampled and cleaned data. Cannot separate.")
+    df_target_year = pd.DataFrame() # Create an empty DataFrame
+
+# Keep a copy for sample lookup (now only contains pre-target year data)
+df_original_lookup = df.copy()
+
+#  Prepare Data for Training (Pre-Target Year) ---
+print(f"\n--- Preparing Training Data (Pre-{TARGET_YEAR_FOR_SEPARATION}) ---")
+# Drop the original date column for the training dataframe
+train_df = df.drop(columns=['date of transfer'])
+
+# Identify categorical columns
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+print(f"Identified categorical columns: {categorical_cols}")
+
+
+label_encoders = {} # Dictionary to store fitted encoders
+
+for col in categorical_cols:
+    # Handle NaNs before encoding: fill with a placeholder string
+    train_df[col].fillna('Missing', inplace=True)
+    # Ensure column is string type for LabelEncoder
+    train_df[col] = train_df[col].astype(str)
+    # Initialize and fit LabelEncoder
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+    # Store the fitted encoder
+    label_encoders[col] = le
+    print(f"Label encoded column: {col}")
+
+# Print shape after encoding (number of columns won't change with label encoding)
+print(f"Shape after label encoding: {train_df.shape}")
+
+# Fill NaNs in numerical columns (if any remain)
+initial_nans = train_df.isna().sum().sum()
+if initial_nans > 0:
+    print(f"Filling {initial_nans} potential NaN values in numerical columns with 0.")
+    train_df.fillna(0, inplace=True)
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+# Get the number of features *after* preprocessing for the Input layer
+n_features = X.shape[1]
+print(f"Number of features after preprocessing: {n_features}")
+
+
+if X.empty or y.empty:
+    print("Error: Training data (X or y) is empty after preprocessing. Cannot proceed.")
+    exit()
+
+# Split into training and testing sets (using only pre-target year data)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+print("\n--- Scaling Features and Target ---")
+x_scaler = StandardScaler()
+# Fit scaler ONLY on training data features
+X_train_scaled = x_scaler.fit_transform(X_train)
+X_test_scaled = x_scaler.transform(X_test)
+print("Features scaled using StandardScaler.")
+
+
+y_scaler = StandardScaler()
+y_train_scaled = y_scaler.fit_transform(y_train.values.reshape(-1, 1))
+# Transform y_test using the *same* scaler fitted on y_train
+# y_test_scaled = y_scaler.transform(y_test.values.reshape(-1, 1)) # Only needed if evaluating loss on scaled test data directly
+print("Target variable (price) scaled using StandardScaler.")
+
+# Define and Train the Keras Model ---
+print(f"\n--- Defining and Training {MODEL_NAME} Model ---")
+# Using the build function from the user's provided code (no changes needed here)
+def build_and_compile_model(n_features):
+  model = keras.Sequential([
+      layers.Input(shape=(n_features,)),
+      layers.Dense(128, activation='relu', kernel_regularizer=regularizers.l2(0.001)),
+      layers.Dropout(0.3),
+      layers.Dense(64, activation='relu', kernel_regularizer=regularizers.l2(0.001)),
+      layers.Dropout(0.3),
+      layers.Dense(1) # Output layer for regression
+  ])
+
+  model.compile(loss='mean_squared_error',
+                optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
+                metrics=['mae', 'mse']) # MAE and MSE on the SCALED target
+  return model
+
+nn_model = build_and_compile_model(n_features)
+nn_model.summary()
+
+# Define callbacks (no changes needed)
+early_stopping = EarlyStopping(
+    monitor='val_loss', # Monitor validation loss (on scaled target)
+    patience=20,        # Stop after 20 epochs with no improvement
+    restore_best_weights=True, # Restore weights from the best epoch
+    verbose=1
+)
+
+
+print("\nStarting model training...")
+
+if X_train_scaled.shape[0] == 0 or y_train_scaled.shape[0] == 0:
+    print("Error: Training data is empty after scaling/splitting. Cannot train model.")
+    exit()
+
+history = nn_model.fit(
+    X_train_scaled,
+    y_train_scaled, # Use scaled target for training
+    epochs=200,           # Number of training epochs
+    batch_size=64,        # Batch size
+    validation_split=0.2, # Use 20% of training data for validation
+    verbose=1,            # Show progress per epoch
+    callbacks=[early_stopping] # Apply early stopping
+)
+print("Model training complete.")
+
+
+
+
+print(f"\n--- Evaluating Model on Test Set (Pre-{TARGET_YEAR_FOR_SEPARATION} Data) ---")
+# Predict SCALED prices on SCALED test data
+scaled_predictions_test = nn_model.predict(X_test_scaled)
+
+
+predictions_test_original_scale = y_scaler.inverse_transform(scaled_predictions_test).flatten()
+
+
+valid_indices_test = np.isfinite(predictions_test_original_scale) & np.isfinite(y_test.values)
+if not np.all(valid_indices_test):
+    print(f"Warning: Found {np.sum(~valid_indices_test)} non-finite values in test set final predictions or actuals. Removing them for evaluation.")
+    predictions_eval_test = predictions_test_original_scale[valid_indices_test]
+    y_test_eval = y_test.values[valid_indices_test]
+else:
+    predictions_eval_test = predictions_test_original_scale
+    y_test_eval = y_test.values # Use original y_test values
+
+
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    mae_test = mean_absolute_error(y_test_eval, predictions_eval_test)
+    mse_test = mean_squared_error(y_test_eval, predictions_eval_test)
+    rmse_test = sqrt(max(0, mse_test)) # Prevent sqrt of potential tiny negative due to precision
+    r2_test = r2_score(y_test_eval, predictions_eval_test)
+
+    print("\nMetrics on Original Price Scale (Test Set):")
+    print(f'  MAE: {mae_test:,.2f}')
+    print(f'  MSE: {mse_test:,.2f}')
+    print(f'  RMSE: {rmse_test:,.2f}')
+    print(f"  R-squared (R²): {r2_test:.4f}")
+else:
+     print("Could not evaluate model on test set as no valid predictions or actual values were available after cleaning.")
+
+# Plot Actual vs. Predicted (Test Set - Pre-Target Year Data) ---
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    plt.figure(figsize=(10, 8))
+    plt.scatter(y_test_eval, predictions_eval_test, alpha=0.3)
+    plt.xlabel("Actual Price (£)")
+    plt.ylabel("Predicted Price (£)")
+    plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - Test Set - Original Scale)")
+    min_price_val = min(y_test_eval.min(), predictions_eval_test.min()) * 0.9
+    max_price_val = max(y_test_eval.max(), predictions_eval_test.max()) * 1.1
+    if min_price_val >= max_price_val: max_price_val = min_price_val + 10000 # Prevent equal limits
+    plt.plot([min_price_val, max_price_val], [min_price_val, max_price_val], 'r--', lw=2, label='Ideal Fit')
+    plt.xlim(min_price_val, max_price_val)
+    plt.ylim(min_price_val, max_price_val)
+    plt.legend()
+    plt.grid(True)
+    from matplotlib.ticker import FuncFormatter
+    formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+    plt.gca().xaxis.set_major_formatter(formatter)
+    plt.gca().yaxis.set_major_formatter(formatter)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+else:
+    print("Skipping test set plot due to lack of valid data points.")
+
+# Prepare and Predict on Target Year Data 
+print(f"\n--- Preparing and Predicting on {TARGET_YEAR_FOR_SEPARATION} Data ---")
+# Use df_target_year which was created in step 5
+if not df_target_year.empty:
+    try:
+        # Store original prices for evaluation
+        y_target_year_actual_original = df_target_year['price'].copy()
+
+        # Prepare features for target year data
+        # Drop price and date here
+        df_target_year_processed = df_target_year.drop(columns=['date of transfer', 'price'])
+
+
+        for col in categorical_cols:
+             if col in df_target_year_processed.columns:
+                 # Handle NaNs before encoding, using the same placeholder
+                 df_target_year_processed[col].fillna('Missing', inplace=True)
+                 # Ensure column is string type
+                 df_target_year_processed[col] = df_target_year_processed[col].astype(str)
+                 # Retrieve the stored encoder
+                 if col in label_encoders:
+                     le = label_encoders[col]
+                     # Get known classes from the fitted encoder
+                     known_classes = set(le.classes_)
+                     # Handle potential new/unknown categories: map them to a specific value (e.g., -1)
+                     df_target_year_processed[col] = df_target_year_processed[col].apply(
+                         lambda x: le.transform([x])[0] if x in known_classes else -1 # Assign -1 to unknown
+                     )
+                     print(f"Applied label encoding to {TARGET_YEAR_FOR_SEPARATION} data column: {col}")
+                 else:
+                      print(f"Warning: Label encoder for column '{col}' not found. Filling with -1.")
+                      df_target_year_processed[col] = -1 # Fill with placeholder if encoder missing
+             else:
+                 # This handles cases where a categorical column identified in training data is missing in target year data
+                 print(f"Warning: Categorical column '{col}' not found in {TARGET_YEAR_FOR_SEPARATION} data during processing. It will be handled by reindex.")
+
+
+        X_target_year = df_target_year_processed
+
+
+        X_target_year = X_target_year.reindex(columns=X.columns, fill_value=0)
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after align: {X_target_year.shape}")
+
+
+        initial_nans_target_year = X_target_year.isna().sum().sum()
+        if initial_nans_target_year > 0:
+            print(f"Filling {initial_nans_target_year} NaN values in {TARGET_YEAR_FOR_SEPARATION} features with 0.")
+            X_target_year.fillna(0, inplace=True)
+
+
+        X_target_year_scaled = x_scaler.transform(X_target_year)
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after scaling: {X_target_year_scaled.shape}")
+
+
+        scaled_predictions_target_year = nn_model.predict(X_target_year_scaled)
+
+
+        predictions_target_year_original_scale = y_scaler.inverse_transform(scaled_predictions_target_year).flatten()
+
+  
+        df_target_year['predicted_price'] = predictions_target_year_original_scale
+        print(f"Added 'predicted_price' column (original scale) to the {TARGET_YEAR_FOR_SEPARATION} DataFrame.")
+
+
+        print(f"\n--- Model Evaluation ({TARGET_YEAR_FOR_SEPARATION} Data Only - Original Scale) ---")
+        # Ensure finite values for evaluation
+        target_valid_indices = np.isfinite(predictions_target_year_original_scale) & np.isfinite(y_target_year_actual_original.values)
+        if not np.all(target_valid_indices):
+            print(f"Warning: Found {np.sum(~target_valid_indices)} non-finite values in {TARGET_YEAR_FOR_SEPARATION} final predictions or actuals. Removing them for evaluation.")
+            target_predictions_eval = predictions_target_year_original_scale[target_valid_indices]
+            target_y_eval = y_target_year_actual_original.values[target_valid_indices]
+        else:
+            target_predictions_eval = predictions_target_year_original_scale
+            target_y_eval = y_target_year_actual_original.values
+
+        if len(target_predictions_eval) > 0 and len(target_y_eval) > 0:
+            mae_target_year = mean_absolute_error(target_y_eval, target_predictions_eval)
+            mse_target_year = mean_squared_error(target_y_eval, target_predictions_eval)
+            rmse_target_year = sqrt(max(0, mse_target_year))
+            r2_target_year = r2_score(target_y_eval, target_predictions_eval)
+
+            print(f'  MAE ({TARGET_YEAR_FOR_SEPARATION}): {mae_target_year:,.2f}')
+            print(f'  MSE ({TARGET_YEAR_FOR_SEPARATION}): {mse_target_year:,.2f}')
+            print(f'  RMSE ({TARGET_YEAR_FOR_SEPARATION}): {rmse_target_year:,.2f}')
+            print(f"  R-squared (R²) ({TARGET_YEAR_FOR_SEPARATION}): {r2_target_year:.4f}")
+
+   
+            print(f"\n--- Comparison of Actual vs Predicted Prices (Year {TARGET_YEAR_FOR_SEPARATION}) ---")
+            print(df_target_year[['price', 'predicted_price']].head())
+            print(f"\nDescriptive Statistics for {TARGET_YEAR_FOR_SEPARATION} Prices:")
+            # Format describe output
+            print(df_target_year[['price', 'predicted_price']].describe().applymap(lambda x: f"{x:,.0f}"))
+
+            # Plot Target Year Actual vs Predicted (Original Scale)
+            plt.figure(figsize=(10, 8))
+            plt.scatter(target_y_eval, target_predictions_eval, alpha=0.4)
+            plt.xlabel(f"Actual Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.ylabel(f"Predicted Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - {TARGET_YEAR_FOR_SEPARATION} Data Only - Original Scale)")
+            min_price_tgt = min(target_y_eval.min(), target_predictions_eval.min()) * 0.9
+            max_price_tgt = max(target_y_eval.max(), target_predictions_eval.max()) * 1.1
+            if min_price_tgt >= max_price_tgt: max_price_tgt = min_price_tgt + 10000 # Prevent equal limits
+            plt.plot([min_price_tgt, max_price_tgt], [min_price_tgt, max_price_tgt], 'r--', lw=2, label='Ideal Fit')
+            plt.xlim(min_price_tgt, max_price_tgt)
+            plt.ylim(min_price_tgt, max_price_tgt)
+            plt.legend()
+            plt.grid(True)
+            formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+            plt.gca().xaxis.set_major_formatter(formatter)
+            plt.gca().yaxis.set_major_formatter(formatter)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+        else:
+             print(f"Could not evaluate {TARGET_YEAR_FOR_SEPARATION} model as no valid predictions or actual values were available after cleaning.")
+    except Exception as e:
+        print(f"An error occurred during {TARGET_YEAR_FOR_SEPARATION} prediction/evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+else:
+    print(f"\n--- No Data Found for Year {TARGET_YEAR_FOR_SEPARATION} ---")
+    print(f"Skipping prediction and evaluation for {TARGET_YEAR_FOR_SEPARATION}.")
+
+# Sample Prediction Section 
+print(f"\n--- Sample Price Prediction ({MODEL_NAME} - Using Pre-{TARGET_YEAR_FOR_SEPARATION} Sample) ---")
+if not df_original_lookup.empty:
+    try:
+        # Select a random sample from the pre-target year lookup table
+        sample_original_df = df_original_lookup.sample(1, random_state=42)
+
+        if not sample_original_df.empty: # Check if sample is valid
+            sample_index = sample_original_df.index[0]
+
+            # Get original details
+            original_date = sample_original_df['date of transfer'].iloc[0]
+            original_year = sample_original_df['year'].iloc[0]
+            original_price = sample_original_df['price'].iloc[0] # Actual price
+            address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+            original_address = ", ".join(str(sample_original_df[col].iloc[0]) for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+            print(f"\nSelected Sample (Index: {sample_index}):")
+            print(f"  Original Date of Transfer: {original_date.strftime('%Y-%m-%d')}")
+            print(f"  Original Actual Price: £{original_price:,.2f}")
+            print(f"  Address: {original_address}")
+
+            # Get the corresponding processed row from train_df (which is label encoded)
+            if sample_index in train_df.index:
+                sample_processed_row = train_df.loc[[sample_index]]
+
+                X_sample_unscaled = sample_processed_row.drop('price', axis=1)
+
+                X_sample_unscaled = X_sample_unscaled.reindex(columns=X.columns, fill_value=0)
+
+   
+                X_sample_scaled = x_scaler.transform(X_sample_unscaled)
+
+  
+                scaled_prediction_original_year = nn_model.predict(X_sample_scaled) # Output is 2D
+
+                prediction_original_year = y_scaler.inverse_transform(scaled_prediction_original_year)[0, 0]
+                print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+
+                target_year_1 = 2026
+                X_sample_future_1_unscaled = X_sample_unscaled.copy()
+                if 'year' in X_sample_future_1_unscaled.columns:
+                    X_sample_future_1_unscaled['year'] = target_year_1
+                    X_sample_future_1_scaled = x_scaler.transform(X_sample_future_1_unscaled)
+                    scaled_prediction_future_1 = nn_model.predict(X_sample_future_1_scaled)
+                    prediction_future_1 = y_scaler.inverse_transform(scaled_prediction_future_1)[0, 0]
+                    print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+                else:
+                    print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_1}.")
+                    prediction_future_1 = np.nan
+
+  
+                target_year_2 = 2028
+                X_sample_future_2_unscaled = X_sample_unscaled.copy()
+                if 'year' in X_sample_future_2_unscaled.columns:
+                    X_sample_future_2_unscaled['year'] = target_year_2
+                    X_sample_future_2_scaled = x_scaler.transform(X_sample_future_2_unscaled)
+                    scaled_prediction_future_2 = nn_model.predict(X_sample_future_2_scaled)
+                    prediction_future_2 = y_scaler.inverse_transform(scaled_prediction_future_2)[0, 0]
+                    print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+                else:
+                    print(f"Warning: 'year' column not found in sample features. Cannot predict for {target_year_2}.")
+                    prediction_future_2 = np.nan
+
+                print("\nComparison:")
+                print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+                print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+                if not np.isnan(prediction_future_1): print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+                if not np.isnan(prediction_future_2): print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+
+            else:
+                print(f"Sample index {sample_index} not found in the processed training data (train_df). Skipping sample prediction.")
+        else:
+             print("Could not select a valid sample from the original lookup DataFrame. Skipping sample prediction.")
+    except Exception as e:
+        print(f"An error occurred during sample prediction: {e}")
+        import traceback
+        traceback.print_exc()
+
+else:
+    print(f"Original lookup DataFrame (pre-{TARGET_YEAR_FOR_SEPARATION}) is empty. Skipping sample prediction.")
+
+print("\n--- Script Finished ---")
+
+
+
+
+
+
+
+# LSTM 2024 10y
+
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+# Import LabelEncoder
+from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import StandardScaler
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras import regularizers
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings("ignore")
+
+from matplotlib.ticker import FuncFormatter # Import for formatting axis
+
+
+TARGET_YEAR_FOR_SEPARATION = 2024 # Define the year to separate
+MODEL_NAME = "Keras LSTM (Label Encoded)" # Updated model name
+PLACEHOLDER_VALUE = 'Missing' # Define placeholder for missing categorical values
+UNKNOWN_CATEGORY_VALUE = -1 # Define value for unknown categories during encoding
+
+
+df = pd.read_csv("london_merged_df_filtered_2015.csv")
+df = df.drop(columns=['postcode_cleaned', 'ppd_address_key', 'epc_address_key',
+       'lodgement_date','lmk_key','epc_built_form','epc_age_band'], errors='ignore')
+
+# Basic Cleaning & Filtering ---
+print("\n--- Initial Cleaning & Filtering ---")
+initial_rows = len(df)
+
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+print(f"Dropped {initial_rows - len(df)} rows with missing values in key columns (postcode, epc_floor_area, epc_habitable_rooms).")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified identifier columns.")
+
+initial_rows = len(df)
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price'])
+df['price'] = df['price'].astype(float)
+price_min = 10_000
+price_max = 20_000_000
+df = df[(df["price"] >= price_min) & (df["price"] <= price_max)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside [£{price_min:,}, £{price_max:,}].")
+print(f"DataFrame shape after initial cleaning/filtering: {df.shape}")
+
+
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"])
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+if df.empty:
+    print("Error: No valid data remaining after date processing.")
+    exit()
+
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features.")
+print(f"Years present in data after cleaning: {sorted(df['year'].unique())}")
+
+# Separate Target Year Data ---
+print(f"\n--- Separating {TARGET_YEAR_FOR_SEPARATION} Data ---")
+if TARGET_YEAR_FOR_SEPARATION in df['year'].unique():
+    # Using df_2024 as per user's code structure
+    df_2024 = df[df['year'] == TARGET_YEAR_FOR_SEPARATION].copy()
+    # Remove target year data from the main dataframe for training
+    df = df[df['year'] != TARGET_YEAR_FOR_SEPARATION]
+    print(f"Number of rows in training data (pre-{TARGET_YEAR_FOR_SEPARATION}): {len(df)}")
+    print(f"Number of rows set aside for {TARGET_YEAR_FOR_SEPARATION} evaluation: {len(df_2024)}")
+else:
+    print(f"Warning: Year {TARGET_YEAR_FOR_SEPARATION} not found. Cannot separate.")
+    df_2024 = pd.DataFrame() # Create empty df if year not found
+
+df_original_lookup = df.copy()
+
+# Prepare Data for Training (Pre-Target Year) ---
+print(f"\n--- Preparing Training Data (Pre-{TARGET_YEAR_FOR_SEPARATION}) ---")
+# Use the modified 'df' which excludes the target year
+train_df = df.drop(columns=['date of transfer'])
+
+
+categorical_cols = train_df.select_dtypes(include=['object']).columns.tolist()
+print(f"Identified categorical columns: {list(categorical_cols)}")
+
+
+label_encoders = {} # Dictionary to store fitted encoders
+print(f"Label encoding columns: {list(categorical_cols)}")
+for col in categorical_cols:
+    train_df[col] = train_df[col].astype(str).fillna(PLACEHOLDER_VALUE) # Ensure string and fill NaNs
+    le = LabelEncoder()
+    train_df[col] = le.fit_transform(train_df[col])
+    label_encoders[col] = le # Store fitted encoder
+print(f"Shape after label encoding: {train_df.shape}") # Should have same number of columns
+
+
+train_df.fillna(0, inplace=True) # Fill any remaining NaNs (e.g., in numerical cols)
+
+# Data Splitting (Renumbered logically) ---
+X = train_df.drop(['price'], axis=1)
+y = train_df['price']
+
+if 'price' in X.columns:
+     raise ValueError("Column 'price' should not be in features X")
+if X.empty:
+    print("Error: Feature set X is empty after processing.")
+    exit()
+
+
+feature_order = list(X.columns)
+print(f"Number of features after label encoding: {len(feature_order)}")
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+x_scaler = StandardScaler()
+X_train_scaled = x_scaler.fit_transform(X_train) # Fit only on X_train
+X_test_scaled = x_scaler.transform(X_test)
+
+y_scaler = StandardScaler()
+y_train_scaled = y_scaler.fit_transform(y_train.values.reshape(-1, 1)) 
+
+n_features = X_train_scaled.shape[1] # Number of features remains the same
+
+
+X_train_reshaped = X_train_scaled.reshape((X_train_scaled.shape[0], 1, n_features))
+X_test_reshaped = X_test_scaled.reshape((X_test_scaled.shape[0], 1, n_features))
+print(f"Training data shape (Reshaped for LSTM): {X_train_reshaped.shape}")
+
+
+def build_and_compile_lstm_model_v3(input_shape):
+  model = keras.Sequential([
+      layers.Input(shape=input_shape),
+      layers.LSTM(64, activation='tanh', recurrent_activation='sigmoid',
+                  kernel_regularizer=regularizers.l2(0.01),
+                  recurrent_regularizer=regularizers.l2(0.01)
+                 ),
+      layers.Dropout(0.4),
+      layers.Dense(32, activation='relu',
+                   kernel_regularizer=regularizers.l2(0.01)),
+      layers.Dropout(0.4),
+      layers.Dense(1)
+  ])
+  model.compile(loss='mean_squared_error',
+                optimizer=tf.keras.optimizers.Adam(learning_rate=0.0002),
+                metrics=['mae', 'mse'])
+  return model
+
+lstm_input_shape = (X_train_reshaped.shape[1], X_train_reshaped.shape[2])
+lstm_model = build_and_compile_lstm_model_v3(lstm_input_shape)
+lstm_model.summary()
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=30, restore_best_weights=True)
+
+
+history = lstm_model.fit(
+    X_train_reshaped,
+    y_train_scaled,
+    epochs=200,
+    batch_size=64,
+    validation_split=0.2,
+    verbose=0, # Set to 1 to see epoch progress
+    callbacks=[early_stopping]
+)
+
+
+# Evaluate Model on Test Set (Pre-2024 Data) ---
+# Evaluation logic remains the same
+print(f"\n--- Evaluating Model on Test Set (Pre-{TARGET_YEAR_FOR_SEPARATION} Data) ---")
+scaled_predictions_test = lstm_model.predict(X_test_reshaped)
+predictions_test = y_scaler.inverse_transform(scaled_predictions_test).flatten()
+
+# Ensure finite values
+valid_indices_test = np.isfinite(predictions_test) & np.isfinite(y_test.values)
+if not np.all(valid_indices_test):
+    print(f"Warning: Found {np.sum(~valid_indices_test)} non-finite values in test set predictions/actuals. Removing them for evaluation.")
+    predictions_eval_test = predictions_test[valid_indices_test]
+    y_test_eval = y_test.values[valid_indices_test]
+else:
+    predictions_eval_test = predictions_test
+    y_test_eval = y_test.values
+
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    mae_test = mean_absolute_error(y_test_eval, predictions_eval_test)
+    mse_test = mean_squared_error(y_test_eval, predictions_eval_test)
+    rmse_test = sqrt(max(0, mse_test))
+    r2_test = r2_score(y_test_eval, predictions_eval_test)
+    print("\nMetrics on Original Price Scale (Test Set):")
+    print(f'  MAE: {mae_test:,.2f}')
+    print(f'  MSE: {mse_test:,.2f}')
+    print(f'  RMSE: {rmse_test:,.2f}')
+    print(f"  R-squared (R²): {r2_test:.4f}")
+else:
+     print("Could not evaluate model on test set due to lack of valid data.")
+
+
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    plt.figure(figsize=(10, 8))
+    plt.scatter(y_test_eval, predictions_eval_test, alpha=0.3)
+    plt.xlabel("Actual Price (£) (Test Set)")
+    plt.ylabel("Predicted Price (£) (Test Set)")
+    plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - Test Set - Original Scale)")
+    min_price_val = min(y_test_eval.min(), predictions_eval_test.min()) * 0.9
+    max_price_val = max(y_test_eval.max(), predictions_eval_test.max()) * 1.1
+    if min_price_val >= max_price_val: max_price_val = min_price_val + 10000
+    plt.plot([min_price_val, max_price_val], [min_price_val, max_price_val], 'r--', lw=2, label='Ideal Fit')
+    plt.xlim(min_price_val, max_price_val)
+    plt.ylim(min_price_val, max_price_val)
+    plt.legend()
+    plt.grid(True)
+    formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+    plt.gca().xaxis.set_major_formatter(formatter)
+    plt.gca().yaxis.set_major_formatter(formatter)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+else:
+    print("Skipping test set plot due to lack of valid data.")
+
+
+print(f"\n--- Preparing and Predicting on {TARGET_YEAR_FOR_SEPARATION} Data ---")
+if not df_2024.empty:
+    try:
+        # Store original prices for evaluation
+        y_2024_actual_original = df_2024['price'].copy()
+
+        # Prepare features for 2024 data
+        df_2024_processed = df_2024.drop(columns=['date of transfer', 'price'])
+
+        # **MODIFIED SECTION: Apply Label Encoders to 2024 data**
+        print(f"Applying label encoding to {TARGET_YEAR_FOR_SEPARATION} data...")
+        for col in categorical_cols:
+             if col in df_2024_processed.columns:
+                 df_2024_processed[col] = df_2024_processed[col].astype(str).fillna(PLACEHOLDER_VALUE)
+                 if col in label_encoders:
+                     le = label_encoders[col]
+                     known_classes = set(le.classes_)
+                     # Apply transform, replacing unknowns with UNKNOWN_CATEGORY_VALUE
+                     df_2024_processed[col] = df_2024_processed[col].apply(
+                         lambda x: le.transform([x])[0] if x in known_classes else UNKNOWN_CATEGORY_VALUE
+                     )
+                 else:
+                      print(f"Warning: Label encoder for column '{col}' not found. Filling with {UNKNOWN_CATEGORY_VALUE}.")
+                      df_2024_processed[col] = UNKNOWN_CATEGORY_VALUE
+             else:
+                 print(f"Warning: Categorical column '{col}' not found in {TARGET_YEAR_FOR_SEPARATION} data. It will be handled by reindex.")
+
+      
+        X_2024 = df_2024_processed
+
+        X_2024 = X_2024.reindex(columns=feature_order, fill_value=0)
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after align: {X_2024.shape}")
+
+ 
+        initial_nans_2024 = X_2024.isna().sum().sum()
+        if initial_nans_2024 > 0:
+            print(f"Filling {initial_nans_2024} NaN values in {TARGET_YEAR_FOR_SEPARATION} numerical features with 0.")
+            X_2024.fillna(0, inplace=True)
+
+        X_2024_scaled = x_scaler.transform(X_2024)
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after scaling: {X_2024_scaled.shape}")
+
+
+        X_2024_reshaped = X_2024_scaled.reshape((X_2024_scaled.shape[0], 1, n_features))
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after reshaping: {X_2024_reshaped.shape}")
+
+
+
+        scaled_predictions_2024 = lstm_model.predict(X_2024_reshaped)
+
+
+        predictions_2024_original_scale = y_scaler.inverse_transform(scaled_predictions_2024).flatten()
+
+
+        df_2024['predicted_price'] = predictions_2024_original_scale
+        print(f"Added 'predicted_price' column (original scale) to the {TARGET_YEAR_FOR_SEPARATION} DataFrame.")
+
+
+        print(f"\n--- Model Evaluation ({TARGET_YEAR_FOR_SEPARATION} Data Only - Original Scale) ---")
+
+        target_valid_indices = np.isfinite(predictions_2024_original_scale) & np.isfinite(y_2024_actual_original.values)
+        if not np.all(target_valid_indices):
+            print(f"Warning: Found {np.sum(~target_valid_indices)} non-finite values in {TARGET_YEAR_FOR_SEPARATION} final predictions or actuals. Removing them for evaluation.")
+            target_predictions_eval = predictions_2024_original_scale[target_valid_indices]
+            target_y_eval = y_2024_actual_original.values[target_valid_indices]
+        else:
+            target_predictions_eval = predictions_2024_original_scale
+            target_y_eval = y_2024_actual_original.values
+
+        if len(target_predictions_eval) > 0 and len(target_y_eval) > 0:
+            mae_target_year = mean_absolute_error(target_y_eval, target_predictions_eval)
+            mse_target_year = mean_squared_error(target_y_eval, target_predictions_eval)
+            rmse_target_year = sqrt(max(0, mse_target_year))
+            r2_target_year = r2_score(target_y_eval, target_predictions_eval)
+
+            print(f'  MAE ({TARGET_YEAR_FOR_SEPARATION}): {mae_target_year:,.2f}')
+            print(f'  MSE ({TARGET_YEAR_FOR_SEPARATION}): {mse_target_year:,.2f}')
+            print(f'  RMSE ({TARGET_YEAR_FOR_SEPARATION}): {rmse_target_year:,.2f}')
+            print(f"  R-squared (R²) ({TARGET_YEAR_FOR_SEPARATION}): {r2_target_year:.4f}")
+        else:
+             print(f"Could not evaluate {TARGET_YEAR_FOR_SEPARATION} model as no valid predictions or actual values were available after cleaning.")
+
+
+        print(f"\n--- Comparison of Actual vs Predicted Prices (Year {TARGET_YEAR_FOR_SEPARATION}) ---")
+
+        print(df_2024[['price', 'predicted_price']].head())
+
+ 
+        with pd.option_context('display.float_format', '{:,.0f}'.format): # Format output neatly
+            print(df_2024[['price', 'predicted_price']].describe())
+
+
+        if len(target_predictions_eval) > 0 and len(target_y_eval) > 0:
+            plt.figure(figsize=(10, 8))
+            plt.scatter(target_y_eval, target_predictions_eval, alpha=0.4)
+            plt.xlabel(f"Actual Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.ylabel(f"Predicted Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - {TARGET_YEAR_FOR_SEPARATION} Data Only - Original Scale)")
+            min_price_tgt = min(target_y_eval.min(), target_predictions_eval.min()) * 0.9
+            max_price_tgt = max(target_y_eval.max(), target_predictions_eval.max()) * 1.1
+            if min_price_tgt >= max_price_tgt: max_price_tgt = min_price_tgt + 10000
+            plt.plot([min_price_tgt, max_price_tgt], [min_price_tgt, max_price_tgt], 'r--', lw=2, label='Ideal Fit')
+            plt.xlim(min_price_tgt, max_price_tgt)
+            plt.ylim(min_price_tgt, max_price_tgt)
+            plt.legend()
+            plt.grid(True)
+            formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+            plt.gca().xaxis.set_major_formatter(formatter)
+            plt.gca().yaxis.set_major_formatter(formatter)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+        else:
+             print(f"Skipping {TARGET_YEAR_FOR_SEPARATION} plot due to lack of valid data.")
+
+    except Exception as e:
+        print(f"An error occurred during {TARGET_YEAR_FOR_SEPARATION} prediction/evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+else:
+    print(f"\n--- No Data Found for Year {TARGET_YEAR_FOR_SEPARATION} ---")
+    print(f"Skipping prediction and evaluation for {TARGET_YEAR_FOR_SEPARATION}.")
+
+
+print(f"\n--- Predicting Price for a Sample Property at Different Years ({MODEL_NAME}) ---")
+if not df_original_lookup.empty:
+    try:
+        sample_original_df = df_original_lookup.sample(1, random_state=42)
+
+        if not sample_original_df.empty: # Check sample validity
+            sample_index = sample_original_df.index[0]
+
+            original_date_dt = sample_original_df['date of transfer'].iloc[0]
+            original_year_val = sample_original_df['year'].iloc[0]
+            original_price_val = sample_original_df['price'].iloc[0]
+            address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+            original_address = ", ".join(sample_original_df[col].astype(str).iloc[0] for col in address_fields if col in sample_original_df.columns and pd.notna(sample_original_df[col].iloc[0]))
+
+            print(f"\nSelected Sample (Index: {sample_index}):")
+            print(f"  Original Date: {original_date_dt.strftime('%Y-%m-%d')}")
+            print(f"  Original Price: £{original_price_val:,.2f}")
+            print(f"  Address: {original_address}")
+
+
+            def prepare_sample_lstm(sample_df, target_year=None):
+                """Prepares a single sample row for LSTM prediction using label encoding."""
+                sample = sample_df.copy()
+                original_sample_date = sample['date of transfer'].iloc[0]
+
+                # Update date features if target_year is specified
+                if target_year is not None:
+                    sample['year']    = target_year
+                    try:
+                        target_date = pd.Timestamp(year=target_year, month=original_sample_date.month, day=original_sample_date.day)
+                    except ValueError: # Handle invalid dates like Feb 29
+                        target_date = pd.Timestamp(year=target_year, month=original_sample_date.month, day=max(1, original_sample_date.day-1))
+                        print(f" Adjusted date for {target_year} due to potential invalid day.")
+                    sample["month"]   = target_date.month
+                    sample["day"]     = target_date.day
+                    sample["weekday"] = target_date.weekday
+                    sample["quarter"] = target_date.quarter
+
+                sample = sample.drop(columns=['date of transfer'], errors='ignore')
+
+                # Apply Label Encoding using stored encoders
+                for col in categorical_cols:
+                     if col in sample.columns:
+                         sample[col] = sample[col].astype(str).fillna(PLACEHOLDER_VALUE)
+                         if col in label_encoders:
+                             le = label_encoders[col]
+                             known_classes = set(le.classes_)
+                             # Use apply on the single row (iloc[0])
+                             sample[col] = sample[col].apply(lambda x: le.transform([x])[0] if x in known_classes else UNKNOWN_CATEGORY_VALUE)
+                         else:
+                             sample[col] = UNKNOWN_CATEGORY_VALUE
+                     # If col not in sample, reindex will handle it
+
+
+                sample_reordered = sample.reindex(columns=feature_order, fill_value=0) # Use saved feature_order
+                sample_features = sample_reordered.drop(columns=['price'], errors='ignore')
+
+                sample_features = sample_features.apply(pd.to_numeric, errors='coerce').fillna(0)
+
+
+                sample_scaled = x_scaler.transform(sample_features)
+                sample_reshaped = sample_scaled.reshape((1, 1, sample_scaled.shape[1])) # Reshape to (1, 1, n_features)
+                return sample_reshaped
+
+            X_sample_orig_reshaped = prepare_sample_lstm(sample_original_df)
+            scaled_prediction_original_year = lstm_model.predict(X_sample_orig_reshaped)
+            prediction_original_year = y_scaler.inverse_transform(scaled_prediction_original_year)[0, 0]
+            print(f"\nPrediction for Original Year ({original_year_val}): £{prediction_original_year:,.2f}")
+
+            target_year_1 = 2026
+            X_sample_future_1_reshaped = prepare_sample_lstm(sample_original_df, target_year=target_year_1)
+            scaled_prediction_future_1 = lstm_model.predict(X_sample_future_1_reshaped)
+            prediction_future_1 = y_scaler.inverse_transform(scaled_prediction_future_1)[0, 0]
+            print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+
+            target_year_2 = 2028
+            X_sample_future_2_reshaped = prepare_sample_lstm(sample_original_df, target_year=target_year_2)
+            scaled_prediction_future_2 = lstm_model.predict(X_sample_future_2_reshaped)
+            prediction_future_2 = y_scaler.inverse_transform(scaled_prediction_future_2)[0, 0]
+            print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+
+            print("\nComparison:")
+            print(f"  Actual ({original_year_val}):      £{original_price_val:,.2f}")
+            print(f"  Predicted ({original_year_val}): £{prediction_original_year:,.2f}")
+            print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+            print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+
+            max_train_year = df_original_lookup['year'].max()
+            if max(target_year_1, target_year_2) > max_train_year:
+                 print("\nNOTE: Future year predictions are extrapolations beyond the training data range.")
+        else:
+             print("Could not select a valid sample from the original lookup DataFrame.")
+
+    except Exception as e:
+        print(f"\nError during sample prediction: {e}")
+        import traceback
+        traceback.print_exc()
+        print("Sample prediction skipped.")
+
+else:
+    print("\nCould not select a sample as the original DataFrame is empty after initial filtering.")
+
+print("-" * 60)
+print("\n--- Script Finished ---")
+
+
+
+# xGBOOST 2024 10y
+
+
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+import xgboost as xgb
+import matplotlib.pyplot as plt
+import warnings
+from matplotlib.ticker import FuncFormatter # For plot formatting
+
+
+TARGET_YEAR_FOR_SEPARATION = 2024 # Define the year to separate
+MODEL_NAME = "XGBoost Regressor" # Define model name for titles/prints
+
+# --- Filter Warnings ---
+warnings.filterwarnings("ignore", category=FutureWarning) # XGBoost sometimes throws future warnings
+warnings.filterwarnings("ignore", category=UserWarning)   # Pandas category warnings
+
+df = pd.read_csv("london_merged_df_filtered_2015.csv")
+
+
+print("\n--- Initial Cleaning & Filtering ---")
+initial_rows = len(df)
+df = df.dropna(subset=["postcode","epc_floor_area","epc_habitable_rooms"])
+df = df.dropna(subset=["postcode"])
+print(f"Dropped {initial_rows - len(df)} rows with missing postcodes.")
+
+initial_rows = len(df)
+df = df.drop(columns=['record status - monthly file only', "Transaction unique identifier"], errors='ignore')
+print("Dropped specified columns.")
+
+initial_rows = len(df)
+# Ensure 'price' is numeric before filtering
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+df = df.dropna(subset=['price']) # Drop rows where price couldn't be converted
+df['price'] = df['price'].astype(float) # Ensure price is float for comparison
+price_min = 10_000
+price_max = 20_000_000
+df = df[(df["price"] >= price_min) & (df["price"] <= price_max)]
+print(f"Filtered {initial_rows - len(df)} rows with price outside [£{price_min:,}, £{price_max:,}].")
+print(f"DataFrame shape after initial cleaning/filtering: {df.shape}")
+
+
+print("\n--- Feature Engineering (Date) ---")
+df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+initial_rows = len(df)
+df = df.dropna(subset=["date of transfer"]) # Drop rows where date couldn't be parsed
+print(f"Dropped {initial_rows - len(df)} rows with invalid date format.")
+
+df['year']    = df['date of transfer'].dt.year
+df["month"]   = df['date of transfer'].dt.month
+df["day"]     = df['date of transfer'].dt.day
+df["weekday"] = df['date of transfer'].dt.weekday
+df["quarter"] = df['date of transfer'].dt.quarter
+print("Extracted date features.")
+print(f"Years present in data after cleaning: {sorted(df['year'].unique())}")
+
+
+print(f"\n--- Separating {TARGET_YEAR_FOR_SEPARATION} Data ---")
+if TARGET_YEAR_FOR_SEPARATION in df['year'].unique():
+    df_target_year = df[df['year'] == TARGET_YEAR_FOR_SEPARATION].copy()
+    df = df[df['year'] != TARGET_YEAR_FOR_SEPARATION]
+    print(f"Number of rows in training data (pre-{TARGET_YEAR_FOR_SEPARATION}): {len(df)}")
+    print(f"Number of rows set aside for {TARGET_YEAR_FOR_SEPARATION} evaluation: {len(df_target_year)}")
+else:
+    print(f"Warning: Year {TARGET_YEAR_FOR_SEPARATION} not found. Cannot separate.")
+    df_target_year = pd.DataFrame()
+
+
+df_original_lookup = df.copy()
+
+
+print(f"\n--- Preparing Training Data (Pre-{TARGET_YEAR_FOR_SEPARATION}) ---")
+train_df = df.drop(columns=['date of transfer'])
+categorical_cols = [col for col in train_df.columns if train_df[col].dtype == 'O']
+print(f"Identified categorical columns: {categorical_cols}")
+
+
+category_mappings = {}
+print(f"\n--- Applying Label Encoding ---")
+for col in categorical_cols:
+    train_df[col] = train_df[col].astype('category')
+    category_mappings[col] = train_df[col].cat.categories
+    train_df[col] = train_df[col].cat.codes
+    print(f"Applied label encoding to '{col}'.")
+
+train_df = train_df.replace(-1, -999) # Replace -1 code with a distinct value
+initial_nans = train_df.isna().sum().sum()
+train_df.fillna(0, inplace=True) # Fill any other potential NaNs
+if initial_nans > 0: print(f"Filled {initial_nans} potential NaN values with 0.")
+if (train_df == -999).any().any(): print("Replaced -1 codes from unseen categories with -999.")
+
+# Define Features (X) and Target (y) for training
+X = train_df.drop(['price'], axis=1)
+y = train_df['price'] # Using original price scale as target for direct replacement
+training_columns = X.columns.tolist() # Save columns after encoding
+n_features = X.shape[1]
+print(f"Number of features after label encoding: {n_features}")
+
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"Training data shape (X_train): {X_train.shape}")
+print(f"Testing data shape (X_test): {X_test.shape}")
+
+
+print(f"\n--- Training {MODEL_NAME} Model ---")
+
+# Instantiate XGBoost Regressor
+xgb_model = xgb.XGBRegressor(
+    objective='reg:squarederror', # Objective for regression
+    n_estimators=1000,             # Start with a higher number, use early stopping
+    learning_rate=0.05,            # Common starting point
+    max_depth=7,                   # Controls complexity
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=42,
+    n_jobs=-1,
+    early_stopping_rounds=50,      # Enable early stopping
+    eval_metric='rmse'             # Evaluate on RMSE
+)
+
+
+eval_set = [(X_test, y_test)] 
+
+
+print("\nStarting model training...")
+if X_train.shape[0] == 0 or y_train.shape[0] == 0:
+    print("Error: Training data is empty. Cannot train model.")
+    exit()
+
+xgb_model.fit(
+    X_train,
+    y_train, # Train directly on original price scale
+    eval_set=eval_set,
+    verbose=False # Suppress verbose output during training
+)
+print("Model training complete.")
+best_iteration = xgb_model.best_iteration if hasattr(xgb_model, 'best_iteration') else 'N/A'
+print(f"Best iteration (if stopped early): {best_iteration}")
+
+try:
+    plt.figure(figsize=(10, max(6, n_features // 4)))
+    xgb.plot_importance(xgb_model, max_num_features=25)
+    plt.title(f'{MODEL_NAME} - Feature Importance (Top 25)')
+    plt.tight_layout()
+    plt.show()
+except Exception as e:
+    print(f"Could not plot feature importance: {e}")
+
+
+print(f"\n--- Model Evaluation (Test Set - Pre-{TARGET_YEAR_FOR_SEPARATION} Data) ---")
+predictions_test = xgb_model.predict(X_test) # Use xgb_model
+
+
+valid_indices_test = np.isfinite(predictions_test) & np.isfinite(y_test.values)
+if not np.all(valid_indices_test):
+    print(f"Warning: Found non-finite values in test set predictions/actuals. Removing.")
+    predictions_eval_test = predictions_test[valid_indices_test]
+    y_test_eval = y_test.values[valid_indices_test]
+else:
+    predictions_eval_test = predictions_test
+    y_test_eval = y_test.values
+
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    mae_test = mean_absolute_error(y_test_eval, predictions_eval_test)
+    mse_test = mean_squared_error(y_test_eval, predictions_eval_test)
+    rmse_test = sqrt(max(0, mse_test))
+    r2_test = r2_score(y_test_eval, predictions_eval_test)
+
+    print(f'  MAE: {mae_test:,.2f}')
+    print(f'  MSE: {mse_test:,.2f}')
+    print(f'  RMSE: {rmse_test:,.2f}')
+    print(f"  R-squared (R²): {r2_test:.4f}")
+else:
+     print("Could not evaluate model on test set.")
+
+
+if len(predictions_eval_test) > 0 and len(y_test_eval) > 0:
+    plt.figure(figsize=(10, 8))
+    plt.scatter(y_test_eval, predictions_eval_test, alpha=0.3)
+    plt.xlabel("Actual Price (£) (Pre-2024 Test Set)")
+    plt.ylabel("Predicted Price (£) (Pre-2024 Test Set)")
+    plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - Pre-2024 Test Set)")
+    min_price = min(y_test_eval.min(), predictions_eval_test.min()) * 0.9
+    max_price = max(y_test_eval.max(), predictions_eval_test.max()) * 1.1
+    if min_price >= max_price: max_price = min_price + 10000
+    plt.plot([min_price, max_price], [min_price, max_price], 'r--', lw=2, label='Ideal Fit')
+    plt.xlim(min_price, max_price)
+    plt.ylim(min_price, max_price)
+    plt.legend()
+    plt.grid(True)
+    formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+    plt.gca().xaxis.set_major_formatter(formatter)
+    plt.gca().yaxis.set_major_formatter(formatter)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+else:
+    print("Skipping test set plot.")
+
+
+print(f"\n--- Preparing {TARGET_YEAR_FOR_SEPARATION} Data for Prediction ---")
+if not df_target_year.empty:
+    try:
+        y_target_year_actual = df_target_year['price'].copy()
+
+        # Apply the same preprocessing as the training data
+        df_target_year_processed = df_target_year.drop(columns=['date of transfer', 'price'], errors='ignore')
+
+        print(f"\n--- Applying Consistent Label Encoding to {TARGET_YEAR_FOR_SEPARATION} Data ---")
+        for col in categorical_cols: # Use same list from training prep
+            if col in df_target_year_processed.columns:
+                 categorical_array = pd.Categorical(
+                     df_target_year_processed[col].astype(str), # Ensure string type first
+                     categories=category_mappings[col],
+                     ordered=False
+                 )
+                 df_target_year_processed[col] = categorical_array.codes
+                 # print(f"Applied consistent label encoding to '{col}' in target year data.")
+            else:
+                  print(f"Warning: Column '{col}' not found in target year data frame for encoding.")
+        print("Finished applying label encoding to target year.")
+
+        X_target_year = df_target_year_processed.reindex(columns=training_columns, fill_value=0) # Use saved training columns
+        print(f"Shape of {TARGET_YEAR_FOR_SEPARATION} features after align: {X_target_year.shape}")
+
+
+        X_target_year = X_target_year.replace(-1, -999) # Replace unseen category codes
+        initial_nans_target_year = X_target_year.isna().sum().sum()
+        X_target_year.fillna(0, inplace=True)
+        if initial_nans_target_year > 0: print(f"Filled {initial_nans_target_year} NaN values.")
+        if (X_target_year == -999).any().any(): print("Replaced -1 codes with -999 in target year.")
+
+
+        print(f"\n--- Predicting Prices for {TARGET_YEAR_FOR_SEPARATION} Data ---")
+        predictions_target_year = xgb_model.predict(X_target_year) # Use xgb_model
+
+
+        df_target_year['predicted_price'] = predictions_target_year
+        print(f"Added 'predicted_price' column to the {TARGET_YEAR_FOR_SEPARATION} DataFrame.")
+
+        print(f"\n--- Model Evaluation ({TARGET_YEAR_FOR_SEPARATION} Data Only) ---")
+        # Ensure finite values
+        target_valid_indices = np.isfinite(predictions_target_year) & np.isfinite(y_target_year_actual.values)
+        if not np.all(target_valid_indices):
+            print(f"Warning: Found non-finite values in {TARGET_YEAR_FOR_SEPARATION} predictions/actuals. Removing.")
+            target_predictions_eval = predictions_target_year[target_valid_indices]
+            target_y_eval = y_target_year_actual.values[target_valid_indices]
+        else:
+            target_predictions_eval = predictions_target_year
+            target_y_eval = y_target_year_actual.values
+
+        if len(target_predictions_eval) > 0 and len(target_y_eval) > 0:
+            mae_target_year = mean_absolute_error(target_y_eval, target_predictions_eval)
+            mse_target_year = mean_squared_error(target_y_eval, target_predictions_eval)
+            rmse_target_year = sqrt(max(0, mse_target_year))
+            r2_target_year = r2_score(target_y_eval, target_predictions_eval)
+
+            print(f'  MAE ({TARGET_YEAR_FOR_SEPARATION}): {mae_target_year:,.2f}')
+            print(f'  MSE ({TARGET_YEAR_FOR_SEPARATION}): {mse_target_year:,.2f}')
+            print(f'  RMSE ({TARGET_YEAR_FOR_SEPARATION}): {rmse_target_year:,.2f}')
+            print(f"  R-squared (R²) ({TARGET_YEAR_FOR_SEPARATION}): {r2_target_year:.4f}")
+        else:
+            print(f"Could not evaluate {TARGET_YEAR_FOR_SEPARATION} model.")
+
+
+        print(f"\n--- Comparison of Actual vs Predicted Prices (Year {TARGET_YEAR_FOR_SEPARATION}) ---")
+        print(df_target_year[['price', 'predicted_price']].head())
+        print(f"\nDescriptive Statistics for {TARGET_YEAR_FOR_SEPARATION} Prices:")
+        print(df_target_year[['price', 'predicted_price']].describe().map(lambda x: f"{x:,.0f}")) # Use map
+
+
+        if len(target_predictions_eval) > 0 and len(target_y_eval) > 0:
+            plt.figure(figsize=(10, 8))
+            plt.scatter(target_y_eval, target_predictions_eval, alpha=0.4)
+            plt.xlabel(f"Actual Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.ylabel(f"Predicted Price ({TARGET_YEAR_FOR_SEPARATION}) (£)")
+            plt.title(f"Actual vs. Predicted Prices ({MODEL_NAME} - {TARGET_YEAR_FOR_SEPARATION} Data Only)")
+            min_price_tgt = min(target_y_eval.min(), target_predictions_eval.min()) * 0.9
+            max_price_tgt = max(target_y_eval.max(), target_predictions_eval.max()) * 1.1
+            if min_price_tgt >= max_price_tgt: max_price_tgt = min_price_tgt + 10000
+            plt.plot([min_price_tgt, max_price_tgt], [min_price_tgt, max_price_tgt], 'r--', lw=2, label='Ideal Fit')
+            plt.xlim(min_price_tgt, max_price_tgt)
+            plt.ylim(min_price_tgt, max_price_tgt)
+            plt.legend()
+            plt.grid(True)
+            formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+            plt.gca().xaxis.set_major_formatter(formatter)
+            plt.gca().yaxis.set_major_formatter(formatter)
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.show()
+        else:
+            print("Skipping target year plot.")
+
+    except Exception as e:
+        print(f"An error occurred during {TARGET_YEAR_FOR_SEPARATION} prediction/evaluation: {e}")
+        import traceback
+        traceback.print_exc()
+
+else:
+    print(f"\n--- No Data Found for Year {TARGET_YEAR_FOR_SEPARATION} ---")
+    print(f"Skipping prediction and evaluation for {TARGET_YEAR_FOR_SEPARATION}.")
+
+
+print(f"\n--- Sample Price Prediction ({MODEL_NAME} - Using Pre-{TARGET_YEAR_FOR_SEPARATION} Sample) ---")
+if not df_original_lookup.empty:
+    try:
+        sample_original_df = df_original_lookup.sample(1, random_state=42)
+        sample_index = sample_original_df.index[0]
+        original_price = sample_original_df['price'].iloc[0] # Original actual price
+
+        # Apply consistent label encoding
+        sample_for_processing = sample_original_df.copy()
+        for col in categorical_cols: # Use same list from training prep
+             if col in sample_for_processing.columns:
+                 categorical_array = pd.Categorical(
+                     sample_for_processing[col].astype(str), # Ensure string
+                     categories=category_mappings[col],
+                     ordered=False
+                 )
+                 sample_for_processing[col] = categorical_array.codes
+
+        # Prepare features
+        X_sample_unscaled = sample_for_processing.drop(columns=['date of transfer', 'price'], errors='ignore')
+        X_sample_unscaled = X_sample_unscaled.reindex(columns=training_columns, fill_value=0) # Align
+        X_sample_unscaled = X_sample_unscaled.replace(-1, -999) # Handle unseen
+        X_sample_unscaled.fillna(0, inplace=True)
+
+        # Display original info
+        original_date = sample_original_df['date of transfer'].iloc[0]
+        original_year = sample_original_df['year'].iloc[0]
+        address_fields = ['paon', 'saon', 'street', 'locality', 'town/city', 'district', 'county', 'postcode']
+        # Retrieve original address values *before* encoding for display
+        original_address_df = df_original_lookup.loc[[sample_index]] # Get original row again
+        original_address = ", ".join(str(original_address_df[col].iloc[0]) for col in address_fields if col in original_address_df.columns and pd.notna(original_address_df[col].iloc[0]))
+        print(f"\nSelected Sample (Index: {sample_index}):")
+        print(f"  Original Date: {original_date.strftime('%Y-%m-%d')}")
+        print(f"  Original Actual Price: £{original_price:,.2f}")
+        print(f"  Address: {original_address}") # Display original address
+
+        # Scale if features were scaled for training
+        # X_sample = x_scaler.transform(X_sample_unscaled) if 'x_scaler' in locals() else X_sample_unscaled
+        X_sample = X_sample_unscaled # Not scaling features in this version
+
+        # Predict for original year using xgb_model
+        prediction_original_year = xgb_model.predict(X_sample)[0]
+        if not np.isfinite(prediction_original_year): raise ValueError("Non-finite prediction for sample.")
+        print(f"\nPrediction for Original Year ({original_year}): £{prediction_original_year:,.2f}")
+
+        # Predict for future years
+        target_year_1 = 2026
+        X_sample_future_1_unscaled = X_sample_unscaled.copy()
+        X_sample_future_1_unscaled['year'] = target_year_1
+        # X_sample_future_1 = x_scaler.transform(X_sample_future_1_unscaled) if 'x_scaler' in locals() else X_sample_future_1_unscaled
+        X_sample_future_1 = X_sample_future_1_unscaled
+        prediction_future_1 = xgb_model.predict(X_sample_future_1)[0]
+        if not np.isfinite(prediction_future_1): raise ValueError("Non-finite prediction for future sample 1.")
+        print(f"Prediction for Year {target_year_1}: £{prediction_future_1:,.2f}")
+
+        target_year_2 = 2028
+        X_sample_future_2_unscaled = X_sample_unscaled.copy()
+        X_sample_future_2_unscaled['year'] = target_year_2
+        # X_sample_future_2 = x_scaler.transform(X_sample_future_2_unscaled) if 'x_scaler' in locals() else X_sample_future_2_unscaled
+        X_sample_future_2 = X_sample_future_2_unscaled
+        prediction_future_2 = xgb_model.predict(X_sample_future_2)[0]
+        if not np.isfinite(prediction_future_2): raise ValueError("Non-finite prediction for future sample 2.")
+        print(f"Prediction for Year {target_year_2}: £{prediction_future_2:,.2f}")
+
+        print("\nComparison:")
+        print(f"  Actual ({original_year}):      £{original_price:,.2f}")
+        print(f"  Predicted ({original_year}): £{prediction_original_year:,.2f}")
+        print(f"  Predicted ({target_year_1}):     £{prediction_future_1:,.2f}")
+        print(f"  Predicted ({target_year_2}):     £{prediction_future_2:,.2f}")
+
+    except Exception as e:
+        print(f"An error occurred during sample prediction: {e}")
+        import traceback
+        traceback.print_exc()
+else:
+    print(f"Original lookup DataFrame (pre-{TARGET_YEAR_FOR_SEPARATION}) is empty.")
+
+print("\n--- Script Finished ---")
+
+
+
+XGboost visualization Gradio
+
+import numpy as np
+import pandas as pd
+from math import sqrt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.preprocessing import StandardScaler
+import xgboost as xgb
+import matplotlib.pyplot as plt
+import warnings
+from matplotlib.ticker import FuncFormatter
+from datetime import datetime, timedelta
+import gradio as gr
+import traceback
+import re
+
+
+TARGET_YEAR_FOR_SEPARATION = 2024 # Year excluded from training
+MODEL_NAME = "XGBoost Regressor (Address Lookup)"
+PREDICTION_HORIZON_YEARS = 3 # How many years into the future to predict for the trend plot
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+# --- Global Variables (for Gradio state) ---
+
+xgb_model_viz = None
+x_scaler_viz = None
+category_mappings_viz = None # To store label encoding mappings
+training_columns_viz = None # To store feature order/names after encoding
+categorical_cols_viz = None # List of original categorical column names
+default_categorical_values_viz = None # Modes for non-address categoricals (encoded)
+df_cleaned_viz = None # To store cleaned data for historical lookups & dropdowns (original data)
+train_df_encoded_viz = None # To store the encoded training data (used for finding feature modes)
+price_min_filter_viz = 10_000
+price_max_filter_viz = 20_000_000
+unique_streets_viz = [] # List of unique street names for dropdown
+
+# --- Address Cleaning Function ---
+
+def clean_address_string(addr_str):
+    if pd.isna(addr_str): return ''
+    addr_str = str(addr_str).upper()
+    addr_str = re.sub(r'[^\w\s]', '', addr_str); addr_str = re.sub(r'\s+', ' ', addr_str).strip()
+    addr_str = addr_str.replace(' ROAD', ' RD').replace(' STREET', ' ST').replace(' AVENUE', ' AVE')
+    addr_str = addr_str.replace(' COURT', ' CT').replace(' LANE', ' LN').replace(' SQUARE', ' SQ')
+    addr_str = addr_str.replace(' CLOSE', ' CL').replace(' DRIVE', ' DR')
+    addr_str = addr_str.replace(' FLAT ', 'FLT ').replace(' APARTMENT ', 'APT ')
+    return addr_str
+
+# --- Setup Function (Data Loading, Preprocessing, Training) ---
+
+def setup_data_and_model_for_viz():
+    global xgb_model_viz, x_scaler_viz, category_mappings_viz, training_columns_viz, categorical_cols_viz
+    global default_categorical_values_viz, df_cleaned_viz, price_min_filter_viz, price_max_filter_viz, unique_streets_viz
+    global train_df_encoded_viz # Added global declaration
+
+    print("--- Running Setup: Loading Data ---")
+    try:
+        df = pd.read_csv("london_merged_df_filtered.csv")
+        print(f"Successfully loaded merged data. Initial shape: {df.shape}")
+    except FileNotFoundError:
+        print("Error: london_merged_df_filtered.csv not found.")
+        return False
+
+    cols_to_drop_initial = ['postcode_cleaned', 'ppd_address_key', 'epc_address_key',
+                           'lodgement_date','lmk_key','epc_built_form','epc_age_band',
+                           'record status - monthly file only', "Transaction unique identifier"]
+    df = df.drop(columns=[col for col in cols_to_drop_initial if col in df.columns], errors='ignore')
+
+    print("\n--- Initial Cleaning & Filtering ---")
+    required_cols = ['postcode', 'PAON', 'street', 'epc_floor_area', 'epc_habitable_rooms']
+    if not all(col in df.columns for col in required_cols):
+         print(f"Error: Missing one or more required columns: {required_cols}")
+         return False
+    initial_rows = len(df)
+    df = df.dropna(subset=required_cols)
+    print(f"Dropped {initial_rows - len(df)} rows missing critical features.")
+
+    df['price'] = pd.to_numeric(df['price'], errors='coerce')
+    df = df.dropna(subset=['price'])
+    df['price'] = df['price'].astype(float)
+    df = df[(df["price"] >= price_min_filter_viz) & (df["price"] <= price_max_filter_viz)]
+    print(f"Filtered prices. Shape after filtering: {df.shape}")
+    if df.empty: print("Error: DataFrame empty after price filtering."); return False
+
+    print("\n--- Feature Engineering (Date) ---")
+    df["date of transfer"] = pd.to_datetime(df["date of transfer"], format="%Y-%m-%d", errors="coerce")
+    df = df.dropna(subset=["date of transfer"])
+    if df.empty: print("Error: DataFrame empty after date filtering."); return False
+    df['year']    = df['date of transfer'].dt.year
+    df["month"]   = df['date of transfer'].dt.month
+    df["day"]     = df['date of transfer'].dt.day
+    df["weekday"] = df['date of transfer'].dt.weekday
+    df["quarter"] = df['date of transfer'].dt.quarter
+    print("Extracted date features.")
+
+    # Store cleaned data BEFORE encoding
+    df_cleaned_viz = df.copy()
+    df_cleaned_viz['street_lower'] = df_cleaned_viz['street'].str.lower().str.strip()
+    # Store unique streets (original case) for display/lookup consistency
+    unique_streets_viz = sorted(df_cleaned_viz['street'].dropna().unique().tolist())
+    print(f"Found {len(unique_streets_viz)} unique street names.")
+
+    # --- Apply Label Encoding (on a copy for training prep) ---
+    df_encoded = df.copy()
+    # Identify all potential categorical columns including PAON/SAON/Postcode
+    categorical_cols_viz = df_encoded.select_dtypes(include=['object']).columns.tolist()
+    for col in ['postcode', 'PAON', 'SAON']: # Ensure these are treated as categorical
+         if col not in categorical_cols_viz and col in df_encoded.columns:
+             categorical_cols_viz.append(col)
+             df_encoded[col] = df_encoded[col].astype(str) # Convert to string before category
+    categorical_cols_viz = [col for col in categorical_cols_viz if col in df_encoded.columns and col != 'date of transfer']
+
+
+    category_mappings_viz = {}
+    for col in categorical_cols_viz:
+        # Ensure category exists before encoding
+        # Use .astype('category').cat.set_categories to handle potential missing categories more robustly
+        if col in df_encoded.columns:
+            df_encoded[col] = df_encoded[col].astype(str) # Ensure string type
+            try:
+                df_encoded[col] = df_encoded[col].astype('category')
+                category_mappings_viz[col] = df_encoded[col].cat.categories
+                df_encoded[col] = df_encoded[col].cat.codes
+            except Exception as e:
+                print(f"Error encoding column {col}: {e}")
+                df_encoded[col] = -999 # Assign a default code if encoding fails
+
+
+    # --- Separate Target Year ---
+    print(f"\n--- Separating Data for Training (Excluding {TARGET_YEAR_FOR_SEPARATION}) ---")
+    if TARGET_YEAR_FOR_SEPARATION in df_encoded['year'].unique():
+        df_for_training_encoded = df_encoded[df_encoded['year'] != TARGET_YEAR_FOR_SEPARATION].copy()
+    else:
+        df_for_training_encoded = df_encoded.copy()
+
+    train_df = df_for_training_encoded.drop(columns=['date of transfer'])
+    # train_df = train_df.replace(-1, -999) # Handled during encoding now if category not found
+    train_df.fillna(0, inplace=True) # Fill any remaining NaNs
+
+    print("\n--- Calculating Default Values for Prediction ---")
+    default_categorical_values_viz = {}
+    temp_train_df_for_defaults = train_df.drop(columns=['price'], errors='ignore')
+
+    for col in temp_train_df_for_defaults.columns:
+         mode_val = temp_train_df_for_defaults[col].mode()
+         if not mode_val.empty:
+             default_categorical_values_viz[col] = mode_val[0]
+         else:
+             default_categorical_values_viz[col] = 0 # Default to 0 if no mode (e.g., all NaNs in original, or empty category)
+
+
+
+    X = train_df.drop(['price'], axis=1)
+    y = train_df['price']
+    training_columns_viz = X.columns.tolist() # Store the exact column order for prediction
+    n_features = len(training_columns_viz)
+    print(f"Number of features after label encoding: {n_features}")
+
+    if X.empty or y.empty: print("Error: Training features/target empty."); return False
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    print(f"Training data shape (X_train): {X_train.shape}")
+
+    print("\n--- Scaling Features ---")
+    x_scaler_viz = StandardScaler()
+    X_train_scaled = x_scaler_viz.fit_transform(X_train)
+    X_test_scaled = x_scaler_viz.transform(X_test)
+    print("Features scaled using StandardScaler.")
+
+    print(f"\n--- Defining and Training {MODEL_NAME} Model ---")
+    xgb_model_viz = xgb.XGBRegressor(
+        objective='reg:squarederror', n_estimators=1000, learning_rate=0.05,
+        max_depth=7, subsample=0.8, colsample_bytree=0.8, random_state=42,
+        n_jobs=-1, early_stopping_rounds=50, eval_metric='rmse'
+    )
+    print("\nStarting model training...")
+    eval_set = [(X_test_scaled, y_test)]
+
+    xgb_model_viz.fit(X_train_scaled, y_train, eval_set=eval_set) # verbose is True by default
+
+    print("\nModel training complete.")
+
+    print("\n--- Setup Complete ---")
+    return True
+-
+
+def update_paon_dropdown(street_input):
+
+    global df_cleaned_viz
+    postcode_reset = gr.update(choices=[], value=None, interactive=False) # Reset postcode dropdown
+    if df_cleaned_viz is None or street_input is None or street_input.strip() == '':
+        print("Clearing PAON and Postcode dropdowns.")
+        # Return updates for BOTH dropdowns
+        return gr.update(choices=[], value=None), postcode_reset
+
+    street_input_clean = street_input.strip().lower()
+    matching_paons = df_cleaned_viz[df_cleaned_viz['street_lower'] == street_input_clean]['PAON'].dropna().unique()
+    sorted_paons_str = []
+    if len(matching_paons) > 0:
+        try:
+            numeric_paons, non_numeric_paons = [], []
+            for p in matching_paons:
+                p_str = str(p).strip()
+                num_part = re.search(r'^(\d+)', p_str)
+                if num_part: numeric_paons.append((int(num_part.group(1)), p_str))
+                else: non_numeric_paons.append(p_str)
+            numeric_paons.sort(key=lambda item: item[0])
+            sorted_paons_str = [item[1] for item in numeric_paons] + sorted(non_numeric_paons)
+        except Exception as e:
+            print(f"PAON sorting error: {e}, falling back to string sort.")
+            sorted_paons_str = sorted([str(p) for p in matching_paons])
+    # print(f"Found {len(sorted_paons_str)} PAONs for street '{street_input}'.") # Too verbose
+    # Return updates for BOTH dropdowns
+    return gr.update(choices=sorted_paons_str, value=None, interactive=True), postcode_reset
+
+
+def update_postcode_dropdown(street_input, paon_input):
+
+    global df_cleaned_viz
+    if df_cleaned_viz is None or not street_input or not paon_input:
+        print("Clearing Postcode dropdown (missing street or PAON).")
+        return gr.update(choices=[], value=None, interactive=False)
+
+    street_input_clean = street_input.strip().lower()
+    paon_input_clean = str(paon_input).strip()
+
+    # Filter based on both street and PAON
+    matching_postcodes = df_cleaned_viz[
+        (df_cleaned_viz['street_lower'] == street_input_clean) &
+        (df_cleaned_viz['PAON'].astype(str).str.strip() == paon_input_clean)
+    ]['postcode'].dropna().unique()
+
+    sorted_postcodes = sorted([str(pc) for pc in matching_postcodes])
+    # print(f"Found {len(sorted_postcodes)} Postcodes for '{paon_input_clean} {street_input}'.") # Too verbose
+
+    # Enable postcode dropdown only if postcodes are found
+    interactive_state = len(sorted_postcodes) > 0
+    # Select the first postcode automatically if only one exists
+    default_value = sorted_postcodes[0] if len(sorted_postcodes) == 1 else None
+
+    return gr.update(choices=sorted_postcodes, value=default_value, interactive=interactive_state)
+
+
+def get_prices_and_predict(street_input, paon_input, postcode_input):
+
+    global df_cleaned_viz, xgb_model_viz, x_scaler_viz, category_mappings_viz, training_columns_viz
+    global categorical_cols_viz, default_categorical_values_viz, price_min_filter_viz, price_max_filter_viz
+
+
+    historical_plot = None
+    predicted_price_str = "Prediction could not be made."
+    historical_table_data = None # Initialize table data to None (will be pandas DataFrame or None)
+
+
+    if not all([street_input, paon_input, postcode_input]):
+        return historical_plot, "Please select Street, House Number/Name, AND Postcode.", historical_table_data # Return all outputs
+    if df_cleaned_viz is None or xgb_model_viz is None or x_scaler_viz is None:
+        return historical_plot, "System not ready. Please wait for setup.", historical_table_data # Return all outputs
+
+    street_input_clean = street_input.strip().lower()
+    paon_input_clean = str(paon_input).strip()
+    postcode_input_clean = str(postcode_input).strip().upper() # Clean postcode input
+    print(f"\nProcessing Request - Street: '{street_input_clean}', PAON: '{paon_input_clean}', Postcode: '{postcode_input_clean}'")
+
+
+    historical_data = df_cleaned_viz[
+        (df_cleaned_viz['street_lower'] == street_input_clean) &
+        (df_cleaned_viz['PAON'].astype(str).str.strip() == paon_input_clean) &
+        (df_cleaned_viz['postcode'].str.upper() == postcode_input_clean) # Match postcode too
+    ].copy()
+
+    latest_property_data = None
+
+    if not historical_data.empty:
+        print(f"Found {len(historical_data)} historical transaction(s).")
+        historical_data = historical_data.sort_values('date of transfer')
+        latest_property_data = historical_data.iloc[-1:].copy()
+
+        # --- Create Historical Plot ---
+        try:
+            fig_hist, ax_hist = plt.subplots(figsize=(10, 4))
+            ax_hist.plot(historical_data['date of transfer'], historical_data['price'], marker='o', linestyle='-')
+            ax_hist.set_xlabel("Date of Transfer")
+            ax_hist.set_ylabel("Price (£)")
+            title = f"Historical Sales: {paon_input_clean} {street_input.strip().title()}, {postcode_input_clean}"
+            ax_hist.set_title(title)
+            ax_hist.grid(True)
+            formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+            ax_hist.yaxis.set_major_formatter(formatter)
+            plt.setp(ax_hist.get_xticklabels(), rotation=30, ha='right')
+            fig_hist.tight_layout()
+            historical_plot = fig_hist
+            print("Generated historical plot.")
+        except Exception as e:
+            print(f"Error generating historical plot: {e}")
+            traceback.print_exc()
+            historical_plot = None # Ensure it's None if plotting fails
+
+        # --- Prepare Historical Data Table ---
+        try:
+            historical_table_data = historical_data[['date of transfer', 'price']].copy()
+            historical_table_data['date of transfer'] = historical_table_data['date of transfer'].dt.strftime('%Y-%m-%d')
+            historical_table_data['price'] = historical_table_data['price'].apply(lambda x: f'£{x:,.2f}')
+            historical_table_data.rename(columns={'date of transfer': 'Date of Transfer', 'price': 'Price Paid (£)'}, inplace=True)
+            print("Prepared historical table data.")
+        except Exception as e:
+            print(f"Error preparing historical table data: {e}")
+            traceback.print_exc()
+            historical_table_data = None # Ensure it's None if table prep fails
+
+    else:
+        print("No historical data found for this exact address/postcode.")
+        predicted_price_str = "No historical data found for this exact address."
+        # historical_plot and historical_table_data remain None
+
+    # --- Predict Current Price ---
+    if latest_property_data is not None:
+        try:
+            # 1. Prepare Input Row
+            input_df = latest_property_data.reset_index(drop=True)
+            now = datetime.now()
+            input_df.loc[0, 'year'] = now.year; input_df.loc[0, 'month'] = now.month
+            input_df.loc[0, 'day'] = now.day; input_df.loc[0, 'weekday'] = now.weekday()
+            input_df.loc[0, 'quarter'] = (now.month - 1) // 3 + 1
+
+            # 2. Apply Consistent Label Encoding and Handle Unseen Categories/Missing Columns
+            processed_input_row = {}
+            for col in training_columns_viz: # Iterate through columns expected by the model
+                 if col in input_df.columns:
+                     if col in categorical_cols_viz and col in category_mappings_viz:
+                         input_val_str = str(input_df.loc[0, col])
+                         if input_val_str in category_mappings_viz[col]:
+                              processed_input_row[col] = category_mappings_viz[col].get_loc(input_val_str)
+                         else:
+                              # print(f"  Warning: Category '{input_val_str}' in '{col}' unseen during prediction. Using default.") # Too verbose
+                              processed_input_row[col] = default_categorical_values_viz.get(col, -999) # Use default from training or -999
+                     else: # Not a known categorical column or no mapping, use value directly
+                         processed_input_row[col] = input_df.loc[0, col]
+                 elif col in default_categorical_values_viz:
+                      # print(f"  Info: Column '{col}' missing in input, using default {default_categorical_values_viz[col]}.") # Too verbose
+                      processed_input_row[col] = default_categorical_values_viz[col]
+                 else:
+                     # print(f"  Warning: Column '{col}' missing in input and no default. Using 0.") # Too verbose
+                     processed_input_row[col] = 0 # Fallback if column is entirely new and no default was calculated
+
+            input_aligned = pd.DataFrame([processed_input_row], columns=training_columns_viz)
+
+
+
+            input_aligned = input_aligned.replace(-1, -999)
+            input_aligned.fillna(0, inplace=True) # Just in case
+
+
+            # 4. Scale Features
+            input_scaled = x_scaler_viz.transform(input_aligned)
+
+            # 5. Predict
+            predicted_price = xgb_model_viz.predict(input_scaled)[0]
+
+            # 6. Format Output
+            print(f"Raw Predicted Current Price: {predicted_price}")
+            if np.isfinite(predicted_price) and predicted_price > 0:
+                bounded_price = max(price_min_filter_viz * 0.5, min(predicted_price, price_max_filter_viz * 2.0)) # Adjusted bounds slightly
+                
+                predicted_price_str = f"£{bounded_price:,.2f}"
+            elif predicted_price <= 0: predicted_price_str = "Prediction non-positive."
+            else: predicted_price_str = "Prediction failed (NaN/Inf)."
+
+        except Exception as e:
+            print(f"Error during prediction step: {e}")
+            traceback.print_exc()
+            predicted_price_str = f"Error predicting current price."
+
+
+    return historical_plot, predicted_price_str, historical_table_data
+
+
+def generate_london_trend_plot():
+
+    global df_cleaned_viz, xgb_model_viz, x_scaler_viz, category_mappings_viz, training_columns_viz
+    global default_categorical_values_viz, train_df_encoded_viz, PREDICTION_HORIZON_YEARS
+
+    if df_cleaned_viz is None or xgb_model_viz is None or x_scaler_viz is None or train_df_encoded_viz is None:
+        print("System not ready for trend plot. Setup incomplete.")
+        # Return an empty plot placeholder
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "Setup incomplete. Cannot generate plot.", horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+        ax.set_title("London Property Price Trend (Setup Pending)")
+        ax.axis('off')
+        return fig
+
+    print("\n--- Generating London Trend Plot ---")
+    try:
+        # --- 1. Calculate Historical Median Prices ---
+        historical_monthly_median = df_cleaned_viz.groupby(['year', 'month'])['price'].median().reset_index()
+        historical_monthly_median['date'] = pd.to_datetime(historical_monthly_median[['year', 'month']].assign(day=1))
+        historical_monthly_median = historical_monthly_median.sort_values('date')
+        print(f"Calculated historical median prices for {len(historical_monthly_median)} months.")
+
+        if historical_monthly_median.empty:
+             print("No historical data to plot trend.")
+             fig, ax = plt.subplots()
+             ax.text(0.5, 0.5, "No historical data to plot trend.", horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+             ax.set_title("London Property Price Trend (No Data)")
+             ax.axis('off')
+             return fig
+
+
+        # Use the mode of features from the *encoded training data* as a base
+        # Exclude date columns and price, as these will be generated for future dates
+        features_for_mode = train_df_encoded_viz.drop(columns=['price', 'year', 'month', 'day', 'weekday', 'quarter', 'date of transfer'], errors='ignore')
+        # Calculate mode for all remaining columns
+        base_features = features_for_mode.mode().iloc[0].to_dict() # Get the first row of modes as a dictionary
+        print("Calculated mode features from training data for prediction base.")
+        # print("Base Features:", base_features) # Debug print
+
+
+   
+        last_historical_date = historical_monthly_median['date'].max()
+        start_future_date = last_historical_date + pd.offsets.MonthBegin(1)
+        future_dates = [start_future_date + pd.offsets.MonthBegin(i) for i in range(PREDICTION_HORIZON_YEARS * 12)]
+        print(f"Generated {len(future_dates)} future dates starting from {start_future_date.strftime('%Y-%m-%d')}.")
+
+        future_data_list = []
+        for date in future_dates:
+            future_row = base_features.copy() # Start with mode features
+            # Update date-related features
+            future_row['year'] = date.year
+            future_row['month'] = date.month
+            future_row['day'] = date.day # Using the 1st of the month
+            future_row['weekday'] = date.weekday()
+            future_row['quarter'] = (date.month - 1) // 3 + 1
+            # Add any other calculated/derived date features if used in training
+            # e.g., days_since_start = (date - training_start_date).days # if used
+
+            # Ensure all columns in training_columns_viz are present
+            full_future_row = {}
+            for col in training_columns_viz:
+                 full_future_row[col] = future_row.get(col, default_categorical_values_viz.get(col, 0)) # Use future_row val, then default, then 0
+
+            future_data_list.append(full_future_row)
+
+        future_df_raw = pd.DataFrame(future_data_list, columns=training_columns_viz) # Ensure correct column order
+        # future_df_raw = future_df_raw.replace(-1, -999) # Handled by default values if needed
+        future_df_raw.fillna(0, inplace=True) # Ensure no NaNs remain
+
+        # print("Raw future data for prediction (first 5 rows):") # Debug print
+        # print(future_df_raw.head())
+
+
+     
+        future_scaled = x_scaler_viz.transform(future_df_raw)
+        print(f"Scaled future data ({future_scaled.shape}).")
+
+ 
+        predicted_future_prices = xgb_model_viz.predict(future_scaled)
+        future_df_raw['predicted_price'] = predicted_future_prices
+        future_df_raw['date'] = future_dates # Add the actual date objects
+
+        fig_trend, ax_trend = plt.subplots(figsize=(12, 6))
+
+
+        ax_trend.plot(historical_monthly_median['date'], historical_monthly_median['price'], marker='o', linestyle='-', label='Historical Median Price')
+
+        ax_trend.plot(future_df_raw['date'], future_df_raw['predicted_price'], linestyle=':', color='red', label='Predicted Price Trend')
+
+
+        if last_historical_date:
+             ax_trend.axvline(last_historical_date, color='gray', linestyle='--', label=f'End of Historical Data ({last_historical_date.year})')
+
+        ax_trend.set_xlabel("Date")
+        ax_trend.set_ylabel("Price (£)")
+        ax_trend.set_title(f"London Property Price Trend: Historical Median and {PREDICTION_HORIZON_YEARS}-Year Prediction")
+        ax_trend.grid(True)
+        formatter = FuncFormatter(lambda x, p: f'£{x:,.0f}')
+        ax_trend.yaxis.set_major_formatter(formatter)
+        plt.setp(ax_trend.get_xticklabels(), rotation=30, ha='right')
+        ax_trend.legend()
+        fig_trend.tight_layout()
+
+        print("Generated London trend plot.")
+        return fig_trend
+
+    except Exception as e:
+        print(f"Error generating London trend plot: {e}")
+        traceback.print_exc()
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, f"Error generating plot: {e}", horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, color='red')
+        ax.set_title("London Property Price Trend (Error)")
+        ax.axis('off')
+        return fig
+
+
+
+setup_successful = setup_data_and_model_for_viz()
+
+
+
+if setup_successful:
+    print("\n--- Launching Gradio Address Lookup & Trend Interface ---")
+
+    address_lookup_block = gr.Blocks()
+    with address_lookup_block:
+        gr.Markdown("# UK House Price Lookup & Prediction (XGBoost)")
+        gr.Markdown("Enter a Street Name, select a House Number/Name, then select the Postcode to see historical prices and a current prediction for a specific property.")
+
+        with gr.Row():
+            # Changed to Textbox for better filtering before dropdown
+            street_txt = gr.Textbox(label="Street Name", placeholder="Start typing street name...", interactive=True)
+            paon_dd = gr.Dropdown(label="House Number/Name (PAON)", choices=[], interactive=False) # Start disabled
+            postcode_dd = gr.Dropdown(label="Postcode", choices=[], interactive=False) # Start disabled
+
+        predict_btn = gr.Button("Get Prices & Predict Current")
+
+        with gr.Row():
+             predicted_price_out = gr.Textbox(label="Predicted Current Price (£)", scale=1)
+             historical_table_out = gr.DataFrame(label="Historical Transactions", wrap=True, scale=2)
+
+        historical_plot_out = gr.Plot(label="Historical Prices for this Address")
+
+
+
+        street_txt.change(
+            update_paon_dropdown,
+            inputs=street_txt,
+            outputs=[paon_dd, postcode_dd]
+            )
+
+        paon_dd.change(
+            update_postcode_dropdown,
+            inputs=[street_txt, paon_dd],
+            outputs=postcode_dd
+            )
+
+        predict_btn.click(
+            get_prices_and_predict,
+            inputs=[street_txt, paon_dd, postcode_dd],
+            outputs=[historical_plot_out, predicted_price_out, historical_table_out]
+        )
+
+
+    london_trend_block = gr.Blocks()
+    with london_trend_block:
+        gr.Markdown("# London Property Price Trend")
+        gr.Markdown("Displays the historical median property price trend across London and a future prediction using the trained model.")
+        # The plot is generated by calling the function directly when the tab is loaded/defined
+        london_trend_plot_out = gr.Plot(
+            label="London Property Price Trend",
+            value=generate_london_trend_plot # Call the function to generate the initial plot
+            )
+
+
+
+    demo = gr.TabbedInterface(
+        [address_lookup_block, london_trend_block],
+        ["Address Lookup", "London Trend"]
+    )
+
+
+    print("Interface setup complete. Launching...")
+    demo.launch(show_api=False)
+    print("\n--- Gradio App Running ---")
+
+else:
+    print("\n--- Setup Failed. Gradio interface will not launch. ---")
