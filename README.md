@@ -111,7 +111,7 @@ Requires **Python 3.9+**
 
 **1. Clone the repository:**
 ```bash
-git clone https://github.com/mt23acy/london-house-price-prediction.git
+git clone https://github.com/m-faizan-tariq/london-house-price-prediction.git
 cd london-house-price-prediction
 ```
 
@@ -255,7 +255,7 @@ MSc Data Science and Analytics — University of Hertfordshire (2025)
 
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/muhammad-faizan-tariq/)
 
-[![GitHub](https://img.shields.io/badge/GitHub-Profile-black?logo=github&logoColor=white)](https://github.com/mt23acy)
+[![GitHub](https://img.shields.io/badge/GitHub-Profile-black?logo=github&logoColor=white)](https://github.com/m-faizan-tariq)
 
 [![Email](https://img.shields.io/badge/Email-faizantariq44444%40gmail.com-D14836?logo=gmail&logoColor=white)](mailto:faizantariq44444@gmail.com)
 
