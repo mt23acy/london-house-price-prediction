@@ -253,7 +253,12 @@ To explore the full pipeline in notebooks:
 **Muhammad Faizan Tariq**  
 MSc Data Science and Analytics — University of Hertfordshire (2025)
 
-[LinkedIn](https://www.linkedin.com/in/muhammad-faizan-tariq/)       [GitHub](https://github.com/mt23acy)        [Email](mailto:faizantariq44444@gmail.com)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Connect-blue?logo=linkedin&logoColor=white)](https://www.linkedin.com/in/muhammad-faizan-tariq/)
+
+[![GitHub](https://img.shields.io/badge/GitHub-Profile-black?logo=github&logoColor=white)](https://github.com/mt23acy)
+
+[![Email](https://img.shields.io/badge/Email-faizantariq44444%40gmail.com-D14836?logo=gmail&logoColor=white)](mailto:faizantariq44444@gmail.com)
+
 
 ## 📜 License
 
