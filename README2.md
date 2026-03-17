@@ -93,8 +93,8 @@ london-house-price-prediction/
 ├── main.py                            # Gradio address-lookup app + XGBoost model serving
 ├── LICENSE                            # MIT License for the code
 ├── notebooks/                         # Jupyter notebooks for data & model work
-│   ├── 1hot_london_2024p-merge-data-visualisation-final.ipynb
-│   │   # One-hot encoding experiments + early visualisation
+│   ├── label_london_2024p-merge-data-visualisation-final.ipynb
+│   │   # Label encoding experiments + early visualisation
 │   └── label_enc_london_2024p-merge-data_final2.ipynb
 │       # Final label-encoding pipeline, model training & evaluation
 ├── london_merged_df_filtered_2015.zip # 10-year (2015–2024) filtered dataset (compressed)
@@ -227,8 +227,8 @@ To explore the full pipeline in notebooks:
    ```bash
    jupyter notebook
 2. Open:
-- `notebooks/1hot_london_2024p-merge-data-visualisation-final.ipynb`  
-  for one-hot encoding experiments and early visualisations.
+- `notebooks/label_london_2024p-merge-data-visualisation-final.ipynb`  
+  for label encoding experiments and early visualisations.
 - `notebooks/label_enc_london_2024p-merge-data_final2.ipynb`  
   for the final label-encoding pipeline, model training, evaluation, and plots.
 
